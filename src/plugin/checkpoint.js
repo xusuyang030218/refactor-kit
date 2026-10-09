@@ -1,5 +1,6 @@
 // 审核点执行（04 文档 6.2）：写审核文件 → 按策略决定 off / notify / block → block 时弹审核卡 → 记录结果。
 import { nowIso, resolvePolicy } from '../core/index.js'
+import { panelAlive, request as brokerRequest } from './broker.js'
 
 export const APPROVE = '通过'
 export const APPROVE_EDITED = '修改后通过'
@@ -40,6 +41,42 @@ export async function runCheckpoint({ ctx, exec, project }, input) {
   }
 
   if (policy === 'notify') return finish({ outcome: 'noted' })
+
+  // 面板模式：写入待审核中转，面板自动打开，工具在后台等待（08 文档第 3 节）
+  const ui = reviewCfg?.ui ?? 'auto'
+  const root = project?.root ?? input.root
+  if (root && (ui === 'panel' || (ui === 'auto' && panelAlive()))) {
+    const block = /```ya?ml\s+rk-([a-z0-9-]+)\s*\r?\n([\s\S]*?)```/.exec(input.card.fileContent)
+    let reply
+    try {
+      reply = await brokerRequest({
+        root,
+        cp: input.cp,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        header: input.card.header,
+        question: input.card.question,
+        detail: input.card.detail,
+        file,
+        options: input.card.options ?? DEFAULT_OPTIONS,
+        custom: Boolean(input.card.options),
+        ...(block ? { editable: { block: block[1], text: block[2] } } : {}),
+      }, exec?.signal)
+    } catch (error) {
+      if (error?.code === 'ASK_ABORTED') throw error
+      return finish({ outcome: 'unanswered', comment: `面板审核失败：${error?.message ?? error}` })
+    }
+    if (reply.edited !== undefined && block) {
+      const current = await ledger.readReviewFile(input.fileRel)
+      const updated = current.replace(/(```ya?ml\s+rk-[a-z0-9-]+\s*\r?\n)[\s\S]*?```/, (_m, head) => `${head}${reply.edited.replace(/\s*$/, '\n')}\`\`\``)
+      await ledger.writeReviewFile(input.fileRel, updated)
+    }
+    return finish({
+      outcome: reply.outcome,
+      via: 'panel',
+      ...(reply.selected ? { selected: reply.selected } : {}),
+      ...(reply.comment ? { comment: reply.comment } : {}),
+    })
+  }
 
   const uq = ctx.get?.('userQuestions')
   if (!uq || !exec?.agent) {

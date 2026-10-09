@@ -81,7 +81,7 @@ export function registerProjectTools(ctx, defineTool) {
         ;({ config, detected } = await draftForInit({ targetRoot, legacyRoot, name: args.name }))
       }
       const card = cardCP0({ config, detected, file: `${STATE_DIR}/review/CP0-config.md` })
-      const r = await runCheckpoint({ ctx, exec, project: undefined }, { cp: 'CP0', card, fileRel: 'CP0-config.md', ledger, review: { preset: 'standard' } })
+      const r = await runCheckpoint({ ctx, exec, project: undefined }, { cp: 'CP0', card, fileRel: 'CP0-config.md', ledger, root: targetRoot, review: { preset: 'standard' } })
       if (!isApproved(r)) return { text: `${describeReview('CP0', r)}\n配置未写入。用户修改审核文件后，可调用 rk_init({ legacyRoot, reuseEdited: true }) 再次提交。`, data: r }
       if (r.outcome === 'approved-with-changes') config = readYamlBlock(await ledger.readReviewFile('CP0-config.md'), 'config')
       const file = join(targetRoot, CONFIG_FILE)

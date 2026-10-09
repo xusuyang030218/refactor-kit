@@ -49,7 +49,8 @@ export const DEFAULTS = {
     maxCloseAttempts: 5,
   },
   risk: DEFAULT_RISK,
-  review: { preset: 'standard', checkpoints: {} },
+  // ui：auto（面板在线则用面板，否则问答卡）/ panel / card
+  review: { preset: 'standard', ui: 'auto', checkpoints: {} },
   irreversible: DEFAULT_IRREVERSIBLE,
   gates: {},
   commandAllowlist: ['git diff', 'git log', 'git status'],
@@ -114,6 +115,7 @@ export function validateConfig(c) {
     if (!Number.isInteger(inv[k]) || inv[k] < 1) issues.push(`invariants.${k} 应为正整数`)
   }
   if (!PRESETS.has(c.review?.preset)) issues.push(`review.preset 只能是 ${[...PRESETS].join(' / ')}`)
+  if (!['auto', 'panel', 'card'].includes(c.review?.ui)) issues.push('review.ui 只能是 auto / panel / card')
   strArr(c.irreversible, 'irreversible')
   for (const p of c.irreversible ?? []) {
     try { new RegExp(p, 'i') } catch { issues.push(`irreversible 中的正则无效：${p}`) }

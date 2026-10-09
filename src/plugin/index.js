@@ -5,6 +5,7 @@ import { registerGuards } from './guards.js'
 import { registerSkills } from './skills.js'
 import { registerProjectTools } from './tools-project.js'
 import { registerTaskTools } from './tools-task.js'
+import { registerWeb } from './web.js'
 
 export const name = 'dsh-plugin-refactorkit'
 export const inject = ['tools']
@@ -20,4 +21,10 @@ export function apply(ctx, _config) {
   const { registered, errors } = registerSkills(ctx)
   ctx.logger?.info?.(`refactorkit: 已注册 13 个工具、${registered.length} 个内置技能`)
   for (const e of errors) ctx.logger?.warn?.(`refactorkit: ${e}`)
+  // 面板路由：只有存在 webServer（Web / Desktop）时才注册；headless 下自动跳过
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['webServer'], (webCtx) => {
+      webCtx.effect(() => registerWeb(webCtx), 'refactorkit: panel routes')
+    })
+  }
 }
