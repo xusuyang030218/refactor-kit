@@ -23,6 +23,8 @@ export function parseSkill(text, path) {
     ...(typeof fm.whenToUse === 'string' ? { whenToUse: fm.whenToUse.trim() } : {}),
     content: m[2].trim(),
     path,
+    // DSH 在加载技能正文时要求 source 为字符串（注册时不校验，加载时校验）
+    source: 'dsh-plugin-refactorkit',
     invocation: {
       modelInvocable: !truthy(fm['disable-model-invocation']),
       userInvocable: !falsy(fm['user-invocable']),

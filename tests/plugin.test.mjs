@@ -26,7 +26,16 @@ const ctx = {
   },
   on(name, fn) { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(fn); return () => {} },
   get(name) {
-    if (name === 'skills') return { register(s) { skillsRegistered.push(s); return () => {} } }
+    if (name === 'skills') {
+      return {
+        register(s) {
+          // 与 DSH dsh-skill 加载期校验一致（validateDefinition）：缺字段会在真实加载时失败
+          for (const k of ['name', 'description', 'content', 'source']) assert.equal(typeof s[k], 'string', `技能 ${s.name} 缺少字符串字段 ${k}`)
+          skillsRegistered.push(s)
+          return () => {}
+        },
+      }
+    }
     if (name === 'userQuestions') {
       return {
         async ask(req) {

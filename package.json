@@ -34,8 +34,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test --test-reporter=spec \"tests/*.test.mjs\"",
-    "check": "node scripts/check-syntax.mjs",
+    "test": "node --import ./tests/helpers/dsh-hook.mjs --test --test-reporter=spec \"tests/*.test.mjs\"",
+    "test:core": "node --test --test-reporter=spec tests/core.test.mjs",
+    "check": "node scripts/check.mjs",
     "rk": "node bin/rk.mjs"
   },
   "dependencies": {

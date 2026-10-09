@@ -1,0 +1,50 @@
+# RefactorKit 项目配置模板。放在新系统仓库根目录，命名为 refactorkit.yaml。
+# 推荐做法：在 DSH 中输入 /refactorkit，由 rk_init 自动探测并生成（经 CP0 审核）。手工使用本模板时，改 ★ 标记的字段即可。
+version: 3
+
+project:
+  name: 我的重构项目                          # ★
+  legacyRoot: D:\path\to\legacy-repo          # ★ 老系统仓库（只读）
+  targetRoot: .
+  writeScope: [server/**, web/**, tests/**, docs/**]   # ★ 允许写入的目录
+  memoryFiles: []                             # 会话开始时注入摘要的索引/词汇表文件
+
+# 模型槽：provider 是 DSH「设置 → 模型」中已配置的路由名
+slots:
+  fast:     { provider: <provider>, model: <model> }          # ★ 便宜快速：读旧代码、摘要
+  strong:   { provider: <provider>, model: <model> }          # 强推理：架构决策
+  reviewer:
+    candidates:                                               # ★ 异源审查：至少一个与主会话不同的 provider
+      - { provider: <provider-a>, model: <model> }
+      - { provider: <provider-b>, model: <model> }
+
+autonomy:
+  default: assisted                 # free / assisted / guided
+  byModel: {}                       # 例："anthropic/claude-opus-*": free
+
+review:
+  preset: standard                  # strict / standard / light；演示建议 strict
+
+gates:                              # ★ 命名门禁；契约断言可引用
+  compile:  { command: "mvn -q -DskipTests compile", cwd: server, kind: build }
+  unit:     { command: "mvn -q test",                cwd: server, kind: test }
+  build-fe: { command: "pnpm -r build",              cwd: web,    kind: build }
+  # smoke:  { command: "pwsh tests/smoke.ps1", expectPattern: "FAIL=0", sideEffect: true }
+
+commandAllowlist:                   # ★ 门禁与断言只能执行这些前缀
+  - git diff
+  - git log
+  - git status
+  - mvn -q
+  - pnpm -r build
+
+truth:
+  weights: { java: 0.4, controller: 0.3, vue: 0.2, js: 0.1 }
+  retired: []                       # 按设计裁撤的缺口 id 或老仓文件 glob
+  mapping: {}                       # 老仓控制器类名 → 新仓类名数组（CP1 审核时可编辑）
+  aliases: {}                       # 补充别名：老类名键 → 新类名键数组
+
+# 以下通常保持默认（见 docs/01-设计文档.md 第 7、11 节）
+# invariants: { falseClaimGap: 0.15, maxFailStreak: 3, maxCloseAttempts: 5, taskBudget: { tokens: 600000, delegations: 8 } }
+# risk: { L2: { paths: [...], diffPatterns: [...] } }
+# irreversible: [ ...命令正则... ]
