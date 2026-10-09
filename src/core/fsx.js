@@ -35,11 +35,16 @@ export async function exists(p) {
   try { await stat(p); return true } catch { return false }
 }
 
-export async function readJson(p, fallback) {
+/**
+ * 读 JSON。传入第二个参数（即使是 undefined）表示"文件缺失时返回它"；
+ * 不传则缺失时抛错。JSON 损坏始终抛错，避免把坏账本当成空账本覆盖掉。
+ */
+export async function readJson(p, ...fallback) {
   try {
     return JSON.parse(await readFile(p, 'utf8'))
   } catch (error) {
-    if (fallback !== undefined && (error.code === 'ENOENT' || error instanceof SyntaxError)) return fallback
+    if (fallback.length > 0 && error.code === 'ENOENT') return fallback[0]
+    if (error instanceof SyntaxError) throw Object.assign(new Error(`${p} 不是合法 JSON：${error.message}`), { code: 'STATE_CORRUPT' })
     throw error
   }
 }

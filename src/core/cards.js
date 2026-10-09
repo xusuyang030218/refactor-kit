@@ -40,7 +40,8 @@ export function cardCP0({ config, detected, file }) {
 /** CP1 缺口清单（首次生成或裁撤） */
 export function cardCP1({ summary, gaps, truth, retireRequests, file }) {
   const lines = [
-    `**缺口 ${summary.total} 个**：缺失 ${summary.missing}、部分 ${summary.partial}、已覆盖 ${summary.covered}、已裁撤 ${summary.retired}；端点覆盖率 ${pct(summary.endpointCoverage)}`,
+    `**缺口 ${summary.total} 个**：缺失 ${summary.missing}、部分 ${summary.partial}、已覆盖 ${summary.covered}、已裁撤 ${summary.retired}；端点覆盖率（估算）${pct(summary.endpointCoverage)}`,
+    `**匹配依据**：${Object.entries(summary.byBasis ?? {}).map(([k, n]) => `${k} ${n}`).join('，')}。name / alias 是按类名推断的对应关系，请重点核对；不对的在审核文件 \`rk-mapping\` 块中改正。`,
   ]
   if (truth) lines.push(`**文件数加权完成度** ${pct(truth.completion)}（口径敏感，仅供参考）`)
   if (retireRequests?.length) {
@@ -62,7 +63,11 @@ export function cardCP1({ summary, gaps, truth, retireRequests, file }) {
     '',
     '## 全部缺口',
     '',
-    table(['缺口', '旧文件', '端点', '已匹配', '覆盖', '状态', '缺失示例'], gaps.map((g) => [g.id, g.legacyFile ?? '', g.endpoints ?? '', g.matched ?? '', pct(g.coverage), g.status, (g.missingSample ?? []).slice(0, 3).join('; ')])),
+    table(['缺口', '旧文件', '端点', '估算匹配', '覆盖', '状态', '依据', '对应新类'], gaps.map((g) => [g.id, g.legacyFile ?? '', g.endpoints ?? '', g.estMatched ?? '', pct(g.coverage), g.status, g.basis ?? '', (g.mappedTo ?? []).join(', ')])),
+    '',
+    '## 类名对应（可编辑：改正推断错误的对应；写 [] 表示新仓无对应）',
+    '',
+    yamlBlock('mapping', Object.fromEntries(gaps.filter((g) => g.basis === 'name' || g.basis === 'alias' || g.basis === 'mapping').map((g) => [g.className, g.mappedTo ?? []])), '老仓类名: [新仓类名, ...]；通过后写入 refactorkit.yaml 的 truth.mapping'),
     '',
     '## 裁撤清单（可编辑：删除某行表示不同意裁撤）',
     '',

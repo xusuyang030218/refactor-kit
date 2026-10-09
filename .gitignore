@@ -2,3 +2,5 @@ node_modules/
 .refactorkit/
 *.log
 tests/.tmp/
+examples/*/.run/
+examples/*/refactorkit.draft.yaml

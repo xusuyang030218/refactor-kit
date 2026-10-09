@@ -104,10 +104,12 @@ export function draftConfig({ legacyRoot, name, detected, slots }) {
   }
 }
 
-/** 渲染为带注释的 YAML 文本。 */
-export function renderConfigYaml(config) {
+/** 渲染为带注释的 YAML 文本。reviewed=true 表示已经过 CP0 审核（DSH 内 rk_init）；CLI 草稿为 false。 */
+export function renderConfigYaml(config, { reviewed = false } = {}) {
   return [
-    '# RefactorKit 项目配置（由 rk_init 生成，已经过 CP0 审核）',
+    reviewed
+      ? '# RefactorKit 项目配置（由 rk_init 生成，已经过 CP0 审核）'
+      : '# RefactorKit 项目配置草稿（CLI 生成，未经审核）：请检查 slots 占位符与门禁副作用后，改名为 refactorkit.yaml',
     '# 完整字段见 docs/01-设计文档.md 第 11.3 节；未写的字段使用默认值。',
     YAML.stringify(config, { lineWidth: 0 }),
   ].join('\n')

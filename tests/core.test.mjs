@@ -79,8 +79,10 @@ describe('survey + gaps + truth', () => {
     const { gaps, summary } = core.computeGaps(l, t, { retired: [] })
     const report = gaps.find((g) => g.id === 'G-ReportController')
     assert.equal(report.endpoints, 3)
-    assert.equal(report.matched, 2)
-    assert.equal(report.fuzzy, 2)
+    assert.equal(report.pathMatched, 2)
+    assert.equal(report.estMatched, 2)
+    assert.equal(report.basis, 'path')
+    assert.deepEqual(report.mappedTo, ['ReportController'])
     assert.equal(report.status, 'partial')
     assert.equal(gaps.find((g) => g.id === 'G-FlashController').status, 'missing')
     assert.equal(summary.total, 2)
@@ -97,6 +99,30 @@ describe('survey + gaps + truth', () => {
     const again = core.computeGaps(l, t, { previous: prev })
     assert.equal(again.gaps.find((g) => g.id === 'G-FlashController').status, 'retired')
     assert.equal(again.gaps.find((g) => g.id === 'G-ReportController').taskId, 'T-01')
+  })
+
+  test('REST 重设计：按类名 / 别名 / 拆分后缀 / 显式映射对应，并标注依据', () => {
+    const ctl = (className, n, base) => ({ file: `${className}.java`, className, basePaths: [base], endpoints: Array.from({ length: n }, (_, i) => ({ method: 'ANY', path: `${base}/op${i}.do` })) })
+    const legacyC = { controllers: [ctl('DataSetController', 10, '/ds'), ctl('DeptNewController', 4, '/dept'), ctl('BlurController', 6, '/blur'), ctl('DataController', 5, '/data'), ctl('MmsController', 3, '/mms')] }
+    const rest = (className, n, base) => ({ file: `${className}.java`, className, basePaths: [base], endpoints: Array.from({ length: n }, (_, i) => ({ method: 'GET', path: `${base}/r${i}` })) })
+    const targetC = { controllers: [rest('DatasetController', 6, '/api/v1/datasets'), rest('DepartmentController', 5, '/api/v1/departments'), rest('BlurMaskController', 2, '/api/v1/blur/mask'), rest('BlurRuleController', 2, '/api/v1/blur/rules'), rest('DataFormController', 9, '/api/v1/forms'), rest('MessageController', 3, '/api/v1/messages')] }
+    const { gaps, summary } = core.computeGaps(legacyC, targetC, { mapping: { MmsController: ['MessageController'] } })
+    const by = Object.fromEntries(gaps.map((g) => [g.className, g]))
+    assert.equal(by.DataSetController.basis, 'name')
+    assert.equal(by.DataSetController.coverage, 0.6)
+    assert.equal(by.DataSetController.status, 'partial')
+    assert.equal(by.DeptNewController.basis, 'alias')
+    assert.equal(by.DeptNewController.status, 'covered')
+    assert.equal(by.BlurController.basis, 'alias')
+    assert.deepEqual(by.BlurController.mappedTo.sort(), ['BlurMaskController', 'BlurRuleController'])
+    assert.equal(by.DataController.status, 'missing', 'Data 不应前缀匹配 DataForm')
+    assert.equal(by.MmsController.basis, 'mapping')
+    assert.equal(by.MmsController.status, 'covered')
+    assert.equal(summary.byBasis.name, 1)
+    assert.equal(summary.byBasis.alias, 2)
+    assert.equal(summary.byBasis.mapping, 1)
+    const none = core.computeGaps(legacyC, targetC, { mapping: { DataSetController: [] } }).gaps.find((g) => g.className === 'DataSetController')
+    assert.equal(none.status, 'missing', '显式映射为 [] 表示新仓无对应')
   })
 
   test('加权完成度与仲裁', () => {

@@ -53,7 +53,9 @@ export const DEFAULTS = {
   irreversible: DEFAULT_IRREVERSIBLE,
   gates: {},
   commandAllowlist: ['git diff', 'git log', 'git status'],
-  truth: { weights: { java: 0.4, controller: 0.3, vue: 0.2, js: 0.1 }, retired: [] },
+  // aliases：老仓类名键 → 新仓类名键数组（键为去掉 Controller 后的小写字母数字）
+  // mapping：老仓类名 → 新仓类名数组（[] 表示新仓无对应）；优先级最高，CP1 审核时可编辑
+  truth: { weights: { java: 0.4, controller: 0.3, vue: 0.2, js: 0.1 }, retired: [], aliases: {}, mapping: {} },
   survey: {
     legacy: { exclude: [] },
     target: { exclude: [] },
@@ -169,11 +171,13 @@ export function parseConfig(text, file) {
   const base = dirname(file)
   const targetRoot = resolve(base, merged.project.targetRoot || '.')
   const legacyRoot = isAbsolute(merged.project.legacyRoot) ? merged.project.legacyRoot : resolve(targetRoot, merged.project.legacyRoot)
+  // project.stateDir（可选）：把账本放到目标仓库之外，例如演示时不想改动被重构的仓库
+  const stateDir = merged.project.stateDir ? resolve(base, merged.project.stateDir) : join(targetRoot, STATE_DIR)
   return {
     ...merged,
     file,
     project: { ...merged.project, targetRoot, legacyRoot },
-    stateDir: join(targetRoot, STATE_DIR),
+    stateDir,
   }
 }
 
