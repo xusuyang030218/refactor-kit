@@ -1,4 +1,4 @@
-# RefactorKit 卸载：pwsh scripts/uninstall.ps1 [-Profile desktop]
+# RefactorKit 卸载：powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 [-Profile desktop]
 param([string]$Profile = $(if ($env:DSH_PROFILE) { $env:DSH_PROFILE } else { 'desktop' }))
 $ErrorActionPreference = 'Stop'
 $dsh = Get-Command dsh -ErrorAction SilentlyContinue

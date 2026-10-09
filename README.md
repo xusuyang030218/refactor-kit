@@ -27,7 +27,7 @@
 
 ```powershell
 npm install                      # 唯一依赖：yaml
-pwsh scripts/install.ps1         # 安装到当前 DSH profile（会先确认）；之后重启 DSH
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1         # 安装到当前 DSH profile（会先确认）；之后重启 DSH
 ```
 
 在 DSH 中打开新系统仓库的会话，输入 **`/refactorkit`**。它会先判断项目状态：

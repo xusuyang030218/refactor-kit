@@ -1,5 +1,5 @@
 # RefactorKit 安装入口（05 文档 入口 ①）
-# 用法：pwsh scripts/install.ps1 [-Profile desktop] [-Yes]
+# 用法：powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Profile desktop] [-Yes]
 #
 # DSH Desktop 的 profile 由 Electron 应用独占管理（CLI 会拒绝改动），这种情况下本脚本只打印界面安装步骤；
 # 其他 profile（web / tui / headless 或自建 profile）用 dsh CLI 安装。
