@@ -198,11 +198,12 @@ export function createApi(services = {}) {
       if (!llm) return { providers: [] }
       const providers = []
       for (const p of llm.listProviders?.() ?? []) {
-        const name = p.name ?? p.id ?? p.provider
-        if (!name) continue
+        // DSH 的 provider 对象为 { id: 路由名, name: 显示名 }；refactorkit.yaml 中写的是路由名
+        const id = p.id ?? p.provider ?? p.name
+        if (!id) continue
         let models = []
-        try { models = (await llm.listModels(name)).map((m) => ({ id: m.id, name: m.name })) } catch { models = [] }
-        providers.push({ provider: name, label: p.displayName ?? p.label ?? name, models })
+        try { models = (await llm.listModels(id)).map((m) => ({ id: m.id, name: m.name })) } catch { models = [] }
+        providers.push({ provider: id, label: p.name && p.name !== id ? `${p.name}（${id}）` : id, models })
       }
       return { providers }
     },

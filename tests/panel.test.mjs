@@ -31,7 +31,8 @@ before(async () => {
   api = createApi({
     sessions: () => ({ get: (id) => (id === 'sess-1' ? { header: { cwd: target } } : undefined) }),
     llm: () => ({
-      listProviders: () => [{ name: 'gpt', displayName: 'GPT' }, { name: 'anthropic' }],
+      // 与 DSH dsh-llm 的真实形状一致：{ id: 路由名, name: 显示名 }
+      listProviders: () => [{ id: 'gpt', name: 'GPT' }, { id: 'anthropic', name: 'anthropic' }],
       listModels: async (p) => (p === 'gpt' ? [{ provider: 'gpt', id: 'gpt-5.5', name: 'gpt-5.5' }] : [{ provider: p, id: 'claude-opus-5-5', name: 'Opus' }]),
     }),
   })
@@ -51,7 +52,8 @@ describe('Host 路由', () => {
   test('models：读取 DSH 的 provider 与模型', async () => {
     const r = await api.handle('GET', '/models', q())
     assert.deepEqual(r.body.providers.map((p) => p.provider), ['gpt', 'anthropic'])
-    assert.equal(r.body.providers[0].label, 'GPT')
+    assert.equal(r.body.providers[0].label, 'GPT（gpt）')
+    assert.equal(r.body.providers[1].label, 'anthropic')
     assert.equal(r.body.providers[0].models[0].id, 'gpt-5.5')
   })
 
