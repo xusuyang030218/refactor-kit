@@ -3,7 +3,11 @@ import { isAbsolute, resolve } from 'node:path'
 import { DEFAULT_IRREVERSIBLE, WRITE_TOOL_NAMES, commandOf, matchAny, matchIrreversible, relPosix, writeTargetOf } from '../core/index.js'
 import { cachedProjectFor, cwdOf, modelOf } from './runtime.js'
 
-const isWriteTool = (name, args) => WRITE_TOOL_NAMES.has(name) || (/(write|edit|replace|patch|create|delete|remove|move|rename)/i.test(name) && writeTargetOf(args) !== undefined)
+// DSH 内置写类工具：write / edit（参数 file_path）、str_replace_editor（参数 path + command，command=view 时只读）
+const isWriteTool = (name, args) => {
+  if (name === 'str_replace_editor') return args?.command !== 'view'
+  return WRITE_TOOL_NAMES.has(name) || (/(write|edit|replace|patch|create|delete|remove|move|rename)/i.test(name) && writeTargetOf(args) !== undefined)
+}
 const isShellTool = (name, args) => /(bash|pwsh|powershell|shell|terminal|exec|command)/i.test(name) && typeof commandOf(args) === 'string'
 
 const inside = (abs, root) => {

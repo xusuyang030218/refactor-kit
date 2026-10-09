@@ -37,7 +37,7 @@ gates:
   unit:      { command: "mvn -q test",                cwd: dts-server, kind: test }
   build-fe:  { command: "pnpm -r build",              cwd: dts-dashboard, kind: build }
   typecheck: { command: "pnpm -r typecheck",          cwd: dts-dashboard, kind: build }
-  smoke:     { command: "pwsh tests/smoke-test.ps1",  kind: api, expectPattern: "FAIL=0", sideEffect: true }
+  smoke:     { command: "powershell -ExecutionPolicy Bypass -File tests/smoke-test.ps1",  kind: api, expectPattern: "FAIL=0", sideEffect: true }
 
 commandAllowlist:
   - git diff
@@ -46,7 +46,7 @@ commandAllowlist:
   - mvn -q
   - pnpm -r build
   - pnpm -r typecheck
-  - pwsh tests/smoke-test.ps1
+  - powershell -ExecutionPolicy Bypass -File tests/smoke-test.ps1
 
 truth:
   weights: { java: 0.4, controller: 0.3, vue: 0.2, js: 0.1 }

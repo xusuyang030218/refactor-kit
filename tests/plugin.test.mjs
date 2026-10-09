@@ -205,6 +205,10 @@ describe('端到端：初始化 → 盘点 → 缺口 → 任务 → 底线 → 
     assert.match(guardReason('write', { file_path: 'docs/readme.md' }), /不在 writeScope/)
     assert.equal(guardReason('write', { file_path: 'server/src/controller/ExportController.java' }), undefined)
     assert.equal(guardReason('read', { file_path: join(legacy, 'x') }), undefined)
+    // str_replace_editor：view 是只读，不应被拦；create / str_replace 是写入
+    assert.equal(guardReason('str_replace_editor', { command: 'view', path: join(legacy, 'src', 'ExportController.java') }), undefined)
+    assert.match(guardReason('str_replace_editor', { command: 'str_replace', path: join(legacy, 'src', 'ExportController.java'), old_str: 'a', new_str: 'b' }), /只读/)
+    assert.match(guardReason('str_replace_editor', { command: 'create', path: join(target, 'docs', 'x.md'), file_text: '#' }), /不在 writeScope/)
   })
 
   test('不可逆命令与有副作用门禁会请求审批', async () => {

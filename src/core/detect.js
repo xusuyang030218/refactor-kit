@@ -9,6 +9,15 @@ const dirOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '.')
 
 async function readText(p) { try { return await readFile(p, 'utf8') } catch { return '' } }
 
+/** 选择本机可用的 PowerShell：有 pwsh（7.x）用 pwsh，否则 Windows 自带的 powershell。 */
+export async function powershellCommand() {
+  const { execFile } = await import('node:child_process')
+  const has = (cmd) => new Promise((ok) => execFile(cmd, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { windowsHide: true, timeout: 8000 }, (e) => ok(!e)))
+  if (await has('pwsh')) return 'pwsh -File'
+  if (process.platform === 'win32' && (await has('powershell'))) return 'powershell -ExecutionPolicy Bypass -File'
+  return 'pwsh -File'
+}
+
 /**
  * 探测目标仓库的技术栈与门禁。
  * @param {string} targetRoot
@@ -52,9 +61,10 @@ export async function detectProject(targetRoot) {
       allow.add('npm run build')
     }
   }
+  const ps = await powershellCommand()
   for (const s of scripts.slice(0, 3)) {
     const name = basename(s).replace(/\.(ps1|sh)$/, '')
-    const cmd = s.endsWith('.ps1') ? `pwsh ${s}` : `bash ${s}`
+    const cmd = s.endsWith('.ps1') ? `${ps} ${s}` : `bash ${s}`
     gates[name] = { command: cmd, kind: 'api', sideEffect: true }
     allow.add(cmd)
   }
