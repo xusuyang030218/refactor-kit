@@ -1,0 +1,8 @@
+# RefactorKit bundle patch：插入一行 Host 插件。
+# 安装：pwsh scripts/install.ps1
+#   等价于：dsh plugin --profile <profile> add "dsh-plugin-refactorkit@link:<本仓库绝对路径>"
+# 工具、技能、守卫、审核点都在 Host 进程内注册；本插件没有浏览器端代码。
+- insert:
+    - id: refactorkit
+      name: dsh-plugin-refactorkit
+      config: {}

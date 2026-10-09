@@ -1,0 +1,4 @@
+node_modules/
+.refactorkit/
+*.log
+tests/.tmp/

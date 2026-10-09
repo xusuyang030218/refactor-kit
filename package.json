@@ -1,0 +1,55 @@
+{
+  "name": "dsh-plugin-refactorkit",
+  "version": "0.1.0",
+  "description": "RefactorKit：自主编排的老系统重构插件。模型自己决定用哪个技能、要不要分身；插件用代码守住底线（证据、异源审查、真相仲裁、写入范围），并在关键节点请人审核。",
+  "type": "module",
+  "main": "src/plugin/index.js",
+  "exports": {
+    ".": "./src/plugin/index.js",
+    "./core": "./src/core/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "bin": {
+    "rk": "bin/rk.mjs"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "src",
+    "bin",
+    "skills",
+    "lenses",
+    "templates",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec \"tests/*.test.mjs\"",
+    "check": "node scripts/check-syntax.mjs",
+    "rk": "node bin/rk.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true }
+  },
+  "keywords": ["dsh", "deepseek-harness", "dsh-plugin", "refactor", "migration", "legacy"],
+  "license": "MIT",
+  "private": true
+}

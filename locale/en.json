@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "RefactorKit",
+    "description": "Autonomous legacy-system refactoring: the model picks skills and delegates; code enforces evidence, cross-provider review and truth arbitration; humans approve key checkpoints. Type /refactorkit to start."
+  }
+}
