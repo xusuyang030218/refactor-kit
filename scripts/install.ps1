@@ -27,6 +27,7 @@ if ($Profile -eq 'desktop') {
   Write-Host '  3. 预览显示 dsh-plugin-refactorkit（RefactorKit 重构工具箱）后确认安装'
   Write-Host '  4. 新开一个会话（工作目录选新系统仓库），输入 /refactorkit'
   Write-Host ''
+  Write-Host '或者直接运行：node scripts\desktop-import.mjs（无需重启）' -ForegroundColor Green
   Write-Host '回滚：插件页 → RefactorKit → 卸载。详见 docs/07-安装与使用.md'
   exit 0
 }
