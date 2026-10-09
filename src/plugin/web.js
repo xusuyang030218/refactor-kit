@@ -1,10 +1,34 @@
 // 面板的 Host 同源路由（08 文档第 4 节）。只接受本机请求；webServer 可选注入，headless 下不注册。
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import YAML from 'yaml'
 import { CONFIG_FILE, exists, findConfig, nowIso, parseConfig, renderConfigYaml, summarizeGaps } from '../core/index.js'
 import { draftForInit, openProject } from '../app/project.js'
 import { answer, listPending, samePath, touchPanel } from './broker.js'
+import { bindSession, recentProjects, sessionConfig, touchProject, unbindSession } from './registry.js'
+
+const pctText = (x) => `${(Number(x ?? 0) * 100).toFixed(0)}%`
+
+/** 把决策日志条目翻译成人能读的一行（"过程"视图）。 */
+export function describeEvent(j) {
+  const d = j.detail ?? {}
+  const who = d.agent?.provider ? `${d.agent.provider}/${d.agent.model}` : d.provider ? `${d.provider}/${d.model}` : ''
+  const base = { at: j.at, kind: j.kind, taskId: j.taskId ?? null }
+  switch (j.kind) {
+    case 'task-open': return { ...base, icon: 'open', title: `打开任务「${d.title ?? ''}」`, text: `关联缺口 ${(d.gapIds ?? []).join('、') || '无'}；预估风险 ${d.risk ?? '-'}` }
+    case 'gate': return { ...base, icon: d.verdict === 'pass' ? 'ok' : d.verdict === 'fail' ? 'bad' : 'warn', title: `门禁 ${d.assertion ?? d.gate ?? ''}：${d.verdict}`, text: `执行状态 ${d.exec}`, evidenceId: d.evidenceId }
+    case 'delegate': return { ...base, icon: 'agent', title: `分身（${d.lens ?? '自定义'}）→ ${who || '继承模型'}`, text: [d.why, d.verdict ? `审查结论 ${d.verdict}` : '', d.readOnly ? '只读' : ''].filter(Boolean).join('；') }
+    case 'skill-load': return { ...base, icon: 'skill', title: `加载技能 ${d.name ?? ''}`, text: who }
+    case 'truth': return { ...base, icon: d.verdict === 'FALSE_CLAIM' ? 'bad' : d.verdict === 'CONSISTENT' ? 'ok' : 'warn', title: `真相仲裁：${d.verdict}`, text: `自报 ${pctText(d.selfReported)}，实测 ${pctText(d.measured)}` }
+    case 'human-review': return { ...base, icon: 'human', title: `人工审核 ${d.checkpoint}：${d.outcome}`, text: `策略 ${d.policy}` }
+    case 'close-ok': return { ...base, icon: 'ok', title: '任务完成', text: d.summary ?? '' }
+    case 'irreversible': return { ...base, icon: 'warn', title: '不可逆操作', text: d.command ?? '' }
+    case 'note': return { ...base, icon: 'note', title: `项目记忆（${d.kind ?? ''}）`, text: '' }
+    default:
+      if (j.kind?.startsWith('status-')) return { ...base, icon: 'warn', title: `任务状态 → ${j.kind.slice(7).toUpperCase()}`, text: d.reason ?? (d.blockedReasons ?? []).join('；') }
+      return { ...base, icon: 'note', title: j.kind, text: '' }
+  }
+}
 
 export const API_PREFIX = '/refactorkit/api'
 
@@ -56,7 +80,7 @@ function editableView(config) {
 
 /**
  * 创建 API。sessions / llm 为 DSH 服务（可缺省，便于测试）。
- * @param {{ sessions?: () => any, llm?: () => any }} services
+ * @param {{ sessions?: () => any, llm?: () => any, picker?: () => any }} services
  */
 export function createApi(services = {}) {
   const routes = {
@@ -66,12 +90,103 @@ export function createApi(services = {}) {
       if (!cwd && sessionId) {
         try { cwd = services.sessions?.()?.get(sessionId)?.header?.cwd } catch { cwd = undefined }
       }
-      if (!cwd) return { cwd: null, initialized: false, reason: '无法确定会话的工作目录' }
-      const file = await findConfig(cwd)
-      if (!file) return { cwd, initialized: false, suggestedTarget: cwd }
-      const opened = await openProject(cwd)
-      if (opened.error) return { cwd, initialized: true, configFile: file, error: opened.error }
-      return { cwd, initialized: true, configFile: file, root: opened.project.root, name: opened.project.config.project.name }
+      const recent = await recentProjects()
+      // 会话在面板中绑定的项目优先（重构后存放目录可以不同于会话目录）
+      const bound = await sessionConfig(sessionId)
+      const start = bound ? dirname(bound) : cwd
+      if (!start) return { cwd: null, initialized: false, reason: '无法确定会话的工作目录', recent }
+      const file = await findConfig(start)
+      if (!file) return { cwd, initialized: false, suggestedTarget: cwd ?? '', recent }
+      const opened = await openProject(start)
+      if (opened.error) return { cwd, initialized: true, configFile: file, error: opened.error, recent, bound: Boolean(bound) }
+      const c = opened.project.config
+      await touchProject({ configFile: file, name: c.project.name, root: c.project.targetRoot, legacyRoot: c.project.legacyRoot })
+      return {
+        cwd, initialized: true, configFile: file, bound: Boolean(bound),
+        root: opened.project.root, name: c.project.name,
+        legacyRoot: c.project.legacyRoot, targetRoot: c.project.targetRoot, stateDir: c.stateDir,
+        outsideSession: Boolean(cwd) && samePath(cwd, c.project.targetRoot) === false && !String(resolve(cwd)).toLowerCase().startsWith(String(resolve(c.project.targetRoot)).toLowerCase()),
+        recent,
+      }
+    },
+
+    // ───────── 选择目录 ─────────
+    'GET /fs/list': async (q) => {
+      const raw = q.get('path') ?? ''
+      if (!raw.trim()) {
+        if (process.platform === 'win32') {
+          const drives = []
+          for (const l of 'CDEFGHIJKLMNOPQRSTUVWXYZ') if (await exists(`${l}:\\`)) drives.push({ name: `${l}:`, path: `${l}:\\` })
+          return { path: '', parent: null, entries: drives, isRoot: true }
+        }
+        return routes['GET /fs/list'](new URLSearchParams({ path: '/' }))
+      }
+      const path = resolve(raw)
+      let dirents
+      try { dirents = await readdir(path, { withFileTypes: true }) } catch (error) { throw new HttpError(400, `无法读取目录：${path}（${error.code ?? error.message}）`) }
+      const entries = dirents
+        .filter((d) => d.isDirectory() && !d.name.startsWith('$') && !['System Volume Information', 'node_modules'].includes(d.name))
+        .map((d) => ({ name: d.name, path: join(path, d.name), hidden: d.name.startsWith('.') }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      const parent = dirname(path)
+      return {
+        path,
+        parent: parent === path ? '' : parent,
+        entries,
+        hasConfig: await exists(join(path, CONFIG_FILE)),
+        isGit: await exists(join(path, '.git')),
+      }
+    },
+
+    'POST /fs/pick': async () => {
+      const picker = services.picker?.()
+      const cap = picker?.capability?.()
+      if (!cap || cap.kind !== 'native' || typeof cap.pick !== 'function') return { supported: false }
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 300_000)
+      try {
+        const path = await cap.pick(ac.signal)
+        return { supported: true, path: path ?? null }
+      } finally { clearTimeout(timer) }
+    },
+
+    // ───────── 项目绑定与最近项目 ─────────
+    'GET /recent': async () => ({ recent: await recentProjects() }),
+
+    'POST /bind': async (_q, body) => {
+      const sessionId = need(body.session, 'session')
+      if (body.unbind) { await unbindSession(sessionId); return { ok: true } }
+      const dir = resolve(need(body.path, 'path'))
+      const file = (await exists(join(dir, CONFIG_FILE))) ? join(dir, CONFIG_FILE) : await findConfig(dir)
+      if (!file) throw new HttpError(404, `${dir} 及其上级没有 refactorkit.yaml；请用"新建项目"初始化`)
+      const opened = await openProject(dirname(file))
+      if (opened.error) throw new HttpError(409, opened.error)
+      await bindSession(sessionId, file)
+      const c = opened.project.config
+      await touchProject({ configFile: file, name: c.project.name, root: c.project.targetRoot, legacyRoot: c.project.legacyRoot })
+      return { ok: true, configFile: file, root: opened.project.root }
+    },
+
+    // ───────── 重构过程 ─────────
+    'GET /activity': async (q) => {
+      const p = await requireOpen(q.get('root'))
+      const taskId = q.get('task') || undefined
+      const limit = Math.min(1000, Number(q.get('limit')) || 300)
+      const journal = await p.ledger.readJournal(5000)
+      const items = journal.filter((j) => !taskId || j.taskId === taskId).slice(-limit).reverse().map(describeEvent)
+      const tasks = (await p.ledger.readTasks()).tasks.map((t) => ({ id: t.id, title: t.title, status: t.status }))
+      return { items, tasks, total: journal.length }
+    },
+
+    'GET /evidence': async (q) => {
+      const p = await requireOpen(q.get('root'))
+      const id = need(q.get('id'), 'id')
+      if (!/^ev_[0-9a-f]{12}$/.test(id)) throw new HttpError(400, '证据 id 格式不对')
+      const dir = join(p.config.stateDir, 'evidence')
+      const name = (await readdir(dir).catch(() => [])).find((f) => f.startsWith(id.slice(3)))
+      if (!name) throw new HttpError(404, `找不到证据 ${id}`)
+      const text = await readFile(join(dir, name), 'utf8')
+      return { id, file: join(dir, name), text: text.length > 200_000 ? `${text.slice(0, 200_000)}\n…（已截断）` : text }
     },
 
     'GET /state': async (q) => {
@@ -175,10 +290,11 @@ export function createApi(services = {}) {
     'POST /detect': async (_q, body) => {
       const targetRoot = resolve(need(body.targetRoot, 'targetRoot'))
       const legacyRoot = resolve(need(body.legacyRoot, 'legacyRoot'))
-      if (!(await exists(targetRoot))) throw new HttpError(400, `新仓目录不存在：${targetRoot}`)
-      if (!(await exists(legacyRoot))) throw new HttpError(400, `老仓目录不存在：${legacyRoot}`)
+      if (!(await exists(legacyRoot))) throw new HttpError(400, `要重构的目录（老系统）不存在：${legacyRoot}`)
+      if (samePath(targetRoot, legacyRoot)) throw new HttpError(400, '重构后存放目录不能与要重构的目录相同（老系统只读）')
+      const targetExists = await exists(targetRoot)
       const { config, detected } = await draftForInit({ targetRoot, legacyRoot, name: body.name })
-      return { config, detected }
+      return { config, detected, targetExists }
     },
 
     'POST /init': async (_q, body) => {
@@ -187,9 +303,14 @@ export function createApi(services = {}) {
       if (await exists(file)) throw new HttpError(409, `已存在 ${file}`)
       const text = renderConfigYaml(body.config ?? {}, { reviewed: true }).replace('已经过 CP0 审核', '已在 RefactorKit 面板中审核（CP0）')
       try { parseConfig(text, file) } catch (error) { throw new HttpError(422, error.message) }
+      // 重构后存放目录可以是新目录：不存在时创建
+      await mkdir(targetRoot, { recursive: true })
       await writeFile(file, text)
       const opened = await openProject(targetRoot)
       await opened.project.addProjectReview({ checkpoint: 'CP0', policy: 'block', outcome: 'approved', via: 'panel', file: CONFIG_FILE, askedAt: nowIso(), answeredAt: nowIso() })
+      const c = opened.project.config
+      await touchProject({ configFile: file, name: c.project.name, root: c.project.targetRoot, legacyRoot: c.project.legacyRoot })
+      if (body.session) await bindSession(body.session, file)
       return { ok: true, file, root: opened.project.root }
     },
 
@@ -290,7 +411,7 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 /** 在 webServer 上注册前缀路由。 */
 export function registerWeb(ctx) {
-  const api = createApi({ sessions: () => ctx.get?.('sessions'), llm: () => ctx.get?.('llm') })
+  const api = createApi({ sessions: () => ctx.get?.('sessions'), llm: () => ctx.get?.('llm'), picker: () => ctx.get?.('directoryPicker') })
   return ctx.webServer.register({
     kind: 'prefix',
     path: API_PREFIX,

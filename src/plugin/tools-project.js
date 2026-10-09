@@ -8,7 +8,7 @@ import {
 } from '../core/index.js'
 import { draftForInit, openProject } from '../app/project.js'
 import { describeReview, isApproved, runCheckpoint } from './checkpoint.js'
-import { RK_OUTPUT, RkError, cwdOf, pct, requireProject } from './runtime.js'
+import { RK_OUTPUT, RkError, cwdOf, pct, projectDirOf, requireProject } from './runtime.js'
 
 /** 修改 refactorkit.yaml 中的某个路径，保留注释与格式。 */
 async function updateConfigFile(file, path, value) {
@@ -36,7 +36,7 @@ export function registerProjectTools(ctx, defineTool) {
     parameters: {},
     output: RK_OUTPUT,
     async execute(_args, exec) {
-      const cwd = cwdOf(exec)
+      const cwd = await projectDirOf(exec)
       const opened = await openProject(cwd)
       if (opened.error) {
         const s = computeStatus({ configError: opened.error })

@@ -1,7 +1,7 @@
 // 底线守卫（设计 7 / 7.2 / 7.5）：只对已加载 RefactorKit 项目的会话生效，不影响其他会话。
 import { isAbsolute, resolve } from 'node:path'
 import { DEFAULT_IRREVERSIBLE, WRITE_TOOL_NAMES, commandOf, matchAny, matchIrreversible, relPosix, writeTargetOf } from '../core/index.js'
-import { cachedProjectFor, cwdOf, modelOf } from './runtime.js'
+import { cachedProjectFor, cachedProjectForExec, cwdOf, modelOf } from './runtime.js'
 
 // DSH 内置写类工具：write / edit（参数 file_path）、str_replace_editor（参数 path + command，command=view 时只读）
 const isWriteTool = (name, args) => {
@@ -48,7 +48,7 @@ export function registerGuards(ctx) {
   // 不可逆操作与有副作用门禁：返回 ask，交给 DSH 原生审批
   ctx.on('tools/pre-execute', async (exec, next) => {
     try {
-      const entry = cachedProjectFor(cwdOf(exec))
+      const entry = cachedProjectForExec(exec)
       if (entry && isShellTool(exec.name, exec.arguments)) {
         const cmd = commandOf(exec.arguments)
         const hit = matchIrreversible(cmd, entry.irreversible ?? DEFAULT_IRREVERSIBLE)
@@ -71,7 +71,7 @@ export function registerGuards(ctx) {
 
   // 观察最终结果：记录实施者、技能加载、不可逆操作的实际执行
   ctx.on('tools/result', (exec, result) => {
-    const entry = cachedProjectFor(cwdOf(exec))
+    const entry = cachedProjectForExec(exec)
     if (!entry || result?.isError) return
     const p = entry.project
     if (exec.name === 'skill') {

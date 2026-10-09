@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import vm from 'node:vm'
 import * as broker from '../src/plugin/broker.js'
+import { _setRegistryFile } from '../src/plugin/registry.js'
+import { projectDirOf } from '../src/plugin/runtime.js'
 import { runCheckpoint } from '../src/plugin/checkpoint.js'
 import { createApi } from '../src/plugin/web.js'
 import { openProject } from '../src/app/project.js'
@@ -18,6 +20,7 @@ const q = (o = {}) => new URLSearchParams(o)
 
 before(async () => {
   tmp = await mkdtemp(join(tmpdir(), 'rk-panel-'))
+  _setRegistryFile(join(tmp, 'registry', 'projects.json'))
   target = join(tmp, 'target')
   legacy = join(tmp, 'legacy')
   await mkdir(join(legacy, 'src'), { recursive: true })
@@ -126,6 +129,72 @@ describe('Host 路由', () => {
   })
 })
 
+describe('目录选择、项目绑定与重构过程', () => {
+  test('fs/list：列出子目录并标记含配置 / git；无法读取返回 400', async () => {
+    const r = await api.handle('GET', '/fs/list', q({ path: tmp }))
+    assert.equal(r.status, 200)
+    assert.deepEqual(r.body.entries.map((e) => e.name).filter((n) => n !== 'registry').sort(), ['legacy', 'target'])
+    const t = await api.handle('GET', '/fs/list', q({ path: target }))
+    assert.equal(t.body.hasConfig, true)
+    assert.equal(t.body.isGit, true)
+    assert.equal(t.body.parent, tmp)
+    assert.equal((await api.handle('GET', '/fs/list', q({ path: join(tmp, 'nope') }))).status, 400)
+    const roots = await api.handle('GET', '/fs/list', q())
+    assert.ok(roots.body.entries.length > 0, '空路径列出驱动器 / 根目录')
+  })
+
+  test('fs/pick：无系统选择器时 supported=false', async () => {
+    assert.deepEqual((await api.handle('POST', '/fs/pick', q(), {})).body, { supported: false })
+  })
+
+  test('新建到独立的存放目录：detect 允许新目录；init 创建目录并绑定会话；context 与工具都解析到它', async () => {
+    const out = join(tmp, 'out', 'rebuilt')
+    const d = await api.handle('POST', '/detect', q(), { targetRoot: out, legacyRoot: legacy })
+    assert.equal(d.status, 200, JSON.stringify(d.body))
+    assert.equal(d.body.targetExists, false)
+    assert.equal((await api.handle('POST', '/detect', q(), { targetRoot: legacy, legacyRoot: legacy })).status, 400, '存放目录不能等于老仓')
+    const ok = await api.handle('POST', '/init', q(), { targetRoot: out, config: d.body.config, session: 'sess-2' })
+    assert.equal(ok.status, 200, JSON.stringify(ok.body))
+    const api2 = createApi({ sessions: () => ({ get: () => ({ header: { cwd: target } }) }) })
+    const c = await api2.handle('GET', '/context', q({ session: 'sess-2' }))
+    assert.equal(c.body.root, out)
+    assert.equal(c.body.bound, true)
+    assert.equal(c.body.legacyRoot, legacy)
+    assert.equal(c.body.outsideSession, true)
+    assert.ok(c.body.recent.some((r) => r.root === out))
+    const exec = { agent: { session: { header: { id: 'sess-2', cwd: target } } } }
+    assert.equal(await projectDirOf(exec), out)
+    await api.handle('POST', '/bind', q(), { session: 'sess-2', unbind: true })
+    assert.equal((await api2.handle('GET', '/context', q({ session: 'sess-2' }))).body.root, target)
+    const b = await api.handle('POST', '/bind', q(), { session: 'sess-2', path: out })
+    assert.equal(b.status, 200)
+    assert.equal((await api.handle('POST', '/bind', q(), { session: 'sess-2', path: legacy })).status, 404, '老仓没有配置，不能打开')
+  })
+
+  test('activity：决策日志翻译为时间线，可按任务过滤；evidence 可查看原文', async () => {
+    const { project } = await openProject(target)
+    await project.ledger.journal({ kind: 'task-open', taskId: 'T-01', detail: { title: '导出', gapIds: ['G-A'], risk: 'L2' } })
+    await project.ledger.journal({ kind: 'delegate', taskId: 'T-01', detail: { lens: 'archaeologist', provider: 'aliyun-maas', model: 'qwen', why: '只要结论', readOnly: true } })
+    await project.ledger.journal({ kind: 'skill-load', detail: { name: 'rk-playbook', agent: { provider: 'anthropic', model: 'opus' } } })
+    const runs = await project.runNamedGates(['unit'])
+    const a = await api.handle('GET', '/activity', q({ root: target }))
+    assert.equal(a.status, 200)
+    const titles = a.body.items.map((i) => i.title)
+    assert.ok(titles.includes('打开任务「导出」'))
+    assert.ok(titles.includes('分身（archaeologist）→ aliyun-maas/qwen'))
+    assert.ok(titles.includes('加载技能 rk-playbook'))
+    const gate = a.body.items.find((i) => i.kind === 'gate')
+    assert.equal(gate.evidenceId, runs[0].id)
+    assert.ok(Date.parse(a.body.items[0].at) >= Date.parse(a.body.items.at(-1).at), '最新的在前')
+    const onlyT1 = await api.handle('GET', '/activity', q({ root: target, task: 'T-01' }))
+    assert.equal(onlyT1.body.items.length, 2)
+    const ev = await api.handle('GET', '/evidence', q({ root: target, id: runs[0].id }))
+    assert.equal(ev.status, 200)
+    assert.match(ev.body.text, /command: node -e/)
+    assert.equal((await api.handle('GET', '/evidence', q({ root: target, id: '../../x' }))).status, 400)
+  })
+})
+
 describe('面板审核往返', () => {
   test('面板在线：阻塞审核进入待审核列表，面板"修改后通过"写回审核文件', async () => {
     broker._reset()
@@ -227,6 +296,10 @@ describe('浏览器端', () => {
     assert.equal(reg.slots[0].opts.name, 'sidebar.right.pane.tab')
     assert.equal(reg.slots[0].opts.key, 'dsh-plugin-refactorkit')
     assert.deepEqual(JSON.parse(JSON.stringify(reg.slots[0].opts.inject('sess-1'))), { sessionId: 'sess-1' })
+    const dock = reg.slots.find((s) => s.opts.name === 'conversation.composer.dock')
+    assert.ok(dock, '应注册到 conversation.composer.dock（与"费用明细"同一位置）')
+    assert.equal(dock.opts.id, 'refactorkit-entry')
+    assert.ok(dock.opts.order > 1, '排在"费用明细"（order 1）之后')
     for (const d of reg.effects) if (typeof d === 'function') d()
   })
 
@@ -267,7 +340,14 @@ describe('浏览器端', () => {
     assert.ok(render(T.TasksView, props).includes('导出'))
     const reviews = render(T.ReviewsView, props)
     assert.ok(reviews.includes('等待你决定（1）') && reviews.includes('已阅'))
-    assert.ok(render(T.InitView, { cwd: 'D:/t', catalog, notify: noop, onDone: noop }).includes('探测并生成草稿'))
+    const init = render(T.InitView, { cwd: 'D:/t', sessionId: 's', catalog, notify: noop, onDone: noop })
+    for (const s of ['要重构的目录', '重构后存放的目录', '选择…', '探测并生成草稿']) assert.ok(init.includes(s), `新建项目缺少：${s}`)
+    const chooser = render(T.ProjectChooser, { ctxInfo: { cwd: 'D:/t', bound: true, recent: [{ configFile: 'D:/o/refactorkit.yaml', name: 'DTS', root: 'D:/o', legacyRoot: 'D:/l' }] }, sessionId: 's', notify: noop, onDone: noop, onNew: noop })
+    for (const s of ['新建项目…', '打开已有项目', '最近的项目', 'DTS', '解除绑定']) assert.ok(chooser.includes(s), `项目选择缺少：${s}`)
+    assert.ok(render(T.ActivityView, props).includes('全部过程'))
+    assert.ok(render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', onPick: noop, onClose: noop }).includes('用系统对话框选择'))
+    assert.ok(render(T.DockButton, { sessionId: 's' }).includes('重构'))
+    assert.equal(render(T.DockButton, {}), '', '没有会话时不显示')
     assert.ok(render(T.Panel, { sessionId: 's' }).includes('读取会话'))
   })
 })

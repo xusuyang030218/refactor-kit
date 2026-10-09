@@ -41,6 +41,11 @@ window.__ModuleLoader__.load({
       init: (payload) => call('POST', '/init', payload),
       models: () => call('GET', '/models'),
       action: (root, op, args) => call('POST', '/action', { root, op, args }),
+      list: (path) => call('GET', '/fs/list', { path: path || '' }),
+      pick: () => call('POST', '/fs/pick', {}),
+      bind: (payload) => call('POST', '/bind', payload),
+      activity: (root, task) => call('GET', '/activity', { root, task: task || undefined }),
+      evidence: (root, id) => call('GET', '/evidence', { root, id }),
     }
 
     // ───────────── 样式（主题令牌） ─────────────
@@ -90,6 +95,27 @@ window.__ModuleLoader__.load({
 .rk-toast{position:sticky;bottom:0;margin-top:8px;padding:6px 10px;border-radius:6px;background:var(--dsw-alias-toast-bg);color:var(--dsw-alias-toast-label);font-size:12px}
 .rk-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .rk-sep{height:1px;background:var(--dsw-alias-border-l1);margin:12px 0}
+.rk-proj{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin-top:6px}
+.rk-proj>span:nth-child(odd){color:var(--dsw-alias-label-tertiary)}
+.rk-path{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rk-dirs{max-height:260px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;margin:6px 0}
+.rk-dir{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--dsw-alias-label-primary);padding:4px 8px;font:inherit;font-size:12px;cursor:pointer}
+.rk-dir:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.rk-tl{position:relative;padding-left:18px}
+.rk-tl:before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:1px;background:var(--dsw-alias-border-l2)}
+.rk-ev{position:relative;margin-bottom:10px}
+.rk-dot{position:absolute;left:-16px;top:5px;width:9px;height:9px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.rk-dot.ok{background:var(--dsw-alias-state-success-primary)}.rk-dot.bad{background:var(--dsw-alias-state-error-primary)}.rk-dot.warn{background:var(--dsw-alias-state-warn-primary)}
+.rk-dot.human,.rk-dot.open{background:var(--dsw-alias-state-business-primary)}.rk-dot.agent,.rk-dot.skill{background:var(--dsw-alias-brand-primary)}
+.rk-pre{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Consolas,monospace;font-size:11px;max-height:320px;overflow:auto;background:var(--dsw-alias-markdown-code-block);padding:8px;border-radius:6px}
+.rk-link{border:0;background:none;padding:0;color:var(--dsw-alias-link);cursor:pointer;font:inherit;font-size:12px}
+`
+
+    // 输入框下方按钮（与 cost-meter 的"费用明细"同款样式），单独注入，面板未打开时也生效
+    const DOCK_CSS = `
+.rk-dock-btn{font:inherit;font-size:12px;line-height:20px;padding:0 6px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-button-elevated-fill);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.rk-dock-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.rk-dock-btn .rk-dock-n{display:inline-block;min-width:16px;padding:0 5px;margin-left:4px;border-radius:999px;font-size:11px;line-height:16px;text-align:center;background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-inverted)}
 `
 
     // ───────────── 小组件 ─────────────
@@ -407,7 +433,59 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function InitView({ cwd, catalog, notify, onDone }) {
+    // ───────────── 目录选择 ─────────────
+    function DirPicker({ title, start, onPick, onClose, requireConfig }) {
+      const [path, setPath] = useState(start || '')
+      const [data, setData] = useState(null)
+      const [typed, setTyped] = useState(start || '')
+      const [err, setErr] = useState('')
+      const [noNative, setNoNative] = useState(false)
+      const load = useCallback((p) => {
+        setErr('')
+        api.list(p).then((d) => { setData(d); setPath(d.path); setTyped(d.path) }, (e) => setErr(e.message))
+      }, [])
+      useEffect(() => { load(start || '') }, [])
+      const system = async () => {
+        try {
+          const r = await api.pick()
+          if (!r.supported) { setNoNative(true); return }
+          if (r.path) onPick(r.path)
+        } catch (e) { setErr(e.message) }
+      }
+      const canPick = path && (!requireConfig || (data && data.hasConfig))
+      return h('div', { className: 'rk-card' },
+        h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, title), h('button', { className: 'rk-btn', onClick: onClose }, '取消')),
+        h('div', { className: 'rk-row', style: { marginTop: 6 } },
+          h('input', { className: 'rk-in rk-grow', value: typed, onChange: (e) => setTyped(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') load(typed) }, placeholder: '输入路径后回车，或在下方逐级选择' }),
+          h('button', { className: 'rk-btn', onClick: () => load(typed) }, '前往')),
+        h('div', { className: 'rk-row', style: { marginTop: 6 } },
+          h('button', { className: 'rk-btn', disabled: !data || data.parent === null, onClick: () => load(data.parent) }, '↑ 上一级'),
+          noNative ? h('span', { className: 'rk-hint' }, '当前环境不支持系统对话框，请在下方选择') : h('button', { className: 'rk-btn', onClick: system }, '用系统对话框选择…'),
+          data && data.hasConfig ? h('span', { className: 'rk-pill ok' }, '含 refactorkit.yaml') : null,
+          data && data.isGit ? h('span', { className: 'rk-pill info' }, 'git 仓库') : null),
+        err ? h('p', { className: 'rk-err' }, err) : null,
+        h('div', { className: 'rk-dirs' },
+          !data ? h('p', { className: 'rk-muted', style: { padding: 8 } }, '读取中…') : null,
+          data && data.entries.length === 0 ? h('p', { className: 'rk-muted', style: { padding: 8 } }, '没有子目录') : null,
+          data ? data.entries.filter((e) => !e.hidden).map((e) => h('button', { key: e.path, className: 'rk-dir', onClick: () => load(e.path) }, '📁 ' + e.name)) : null),
+        h('div', { className: 'rk-row' },
+          h('span', { className: 'rk-grow rk-path rk-hint' }, path || '（请选择）'),
+          h('button', { className: 'rk-btn primary', disabled: !canPick, onClick: () => onPick(path) }, requireConfig && data && !data.hasConfig ? '此目录不是 RefactorKit 项目' : '选择此目录')))
+    }
+
+    function PathField({ label, hint, value, onChange, pickerTitle, requireConfig }) {
+      const [open, setOpen] = useState(false)
+      return h('div', null,
+        h('label', { className: 'rk-lbl' }, label),
+        h('div', { className: 'rk-row' },
+          h('input', { className: 'rk-in rk-grow', value: value || '', onChange: (e) => onChange(e.target.value) }),
+          h('button', { className: 'rk-btn', onClick: () => setOpen(!open) }, open ? '收起' : '选择…')),
+        hint ? h('div', { className: 'rk-hint' }, hint) : null,
+        open ? h(DirPicker, { title: pickerTitle || label, start: value, requireConfig, onClose: () => setOpen(false), onPick: (p) => { onChange(p); setOpen(false) } }) : null)
+    }
+
+    // ───────────── 新建项目 ─────────────
+    function InitView({ cwd, sessionId, catalog, notify, onDone, onCancel }) {
       const [targetRoot, setTarget] = useState(cwd || '')
       const [legacyRoot, setLegacy] = useState('')
       const [name, setName] = useState('')
@@ -418,25 +496,96 @@ window.__ModuleLoader__.load({
         setBusy(true); setErr('')
         try { setDraft(await api.detect({ targetRoot, legacyRoot, name })) } catch (e) { setErr(e.message) } finally { setBusy(false) }
       }
+      const differs = cwd && targetRoot && cwd.replace(/[\\/]+$/, '').toLowerCase() !== targetRoot.replace(/[\\/]+$/, '').toLowerCase()
       return h('div', null,
         h('div', { className: 'rk-card' },
-          h('div', { className: 'rk-h' }, '初始化 RefactorKit 项目'),
-          h('p', { className: 'rk-muted' }, '填写新旧仓库路径，插件会探测技术栈并生成配置草稿；你在下面的表单里检查、修改，保存即完成初始化（等同 CP0 审核通过）。'),
-          h(Field, { label: '新系统仓库（被重构的目标）' }, h('input', { className: 'rk-in', value: targetRoot, onChange: (e) => setTarget(e.target.value) })),
-          h(Field, { label: '老系统仓库（只读）' }, h('input', { className: 'rk-in', value: legacyRoot, onChange: (e) => setLegacy(e.target.value), placeholder: '例如 D:\\DTS\\d2d-ncore-cuc-datadiscover-repository' })),
+          h('div', { className: 'rk-row' }, h('div', { className: 'rk-h rk-grow' }, '新建重构项目'), onCancel ? h('button', { className: 'rk-btn', onClick: onCancel }, '返回') : null),
+          h('p', { className: 'rk-muted' }, '选好两个目录后点"探测"，插件识别技术栈并生成配置草稿；在下面的表单检查后保存即完成初始化（等同 CP0 审核通过）。'),
+          h(PathField, { label: '① 要重构的目录（老系统，只读）', hint: '插件会拦截对这个目录的任何写入', value: legacyRoot, onChange: setLegacy, pickerTitle: '选择要重构的目录' }),
+          h(PathField, { label: '② 重构后存放的目录（新系统）', hint: '可以是已有仓库，也可以是一个新目录（会自动创建）；refactorkit.yaml 与过程记录 .refactorkit/ 都放在这里', value: targetRoot, onChange: setTarget, pickerTitle: '选择重构后存放的目录' }),
+          differs ? h('p', { className: 'rk-hint', style: { color: 'var(--dsw-alias-state-warn-primary)' } }, '提示：当前会话的工作目录是 ' + cwd + '。DSH 默认只允许会话写入自己的工作目录，建议在 DSH 中新建会话并把工作目录设为存放目录，或给本会话"完全访问"权限。') : null,
           h(Field, { label: '项目名称（可选）' }, h('input', { className: 'rk-in', value: name, onChange: (e) => setName(e.target.value) })),
           h('div', { className: 'rk-row', style: { marginTop: 8 } }, h('button', { className: 'rk-btn primary', disabled: busy || !targetRoot || !legacyRoot, onClick: detect }, busy ? '探测中…' : (draft ? '重新探测' : '探测并生成草稿'))),
           err ? h('p', { className: 'rk-err' }, err) : null),
         draft ? h(ConfigForm, {
           key: JSON.stringify(draft.config).length, initial: draft.config, catalog, saveLabel: '保存并初始化',
-          extraTop: h('p', { className: 'rk-hint' }, '探测到：' + (draft.detected.stack.map((s) => s.kind + (s.springBoot ? ' (Spring Boot ' + s.springBoot + ')' : '')).join('、') || '未识别') + '。带「副作用」的门禁运行前会再请你批准。'),
+          extraTop: h('p', { className: 'rk-hint' }, (draft.targetExists ? '探测到：' + (draft.detected.stack.map((s) => s.kind + (s.springBoot ? ' (Spring Boot ' + s.springBoot + ')' : '')).join('、') || '未识别技术栈') : '存放目录还不存在，保存时会创建；技术栈与门禁请按目标技术栈填写') + '。带「副作用」的门禁运行前会再请你批准。'),
           onSave: async (c) => {
             const merged = Object.assign({}, draft.config, c, { project: Object.assign({}, draft.config.project, c.project) })
-            await api.init({ targetRoot, config: merged })
-            notify('已初始化：' + targetRoot + '\\refactorkit.yaml')
+            await api.init({ targetRoot, config: merged, session: sessionId })
+            notify('已初始化：' + targetRoot)
             onDone()
           },
         }) : null)
+    }
+
+    // ───────────── 选择 / 切换项目 ─────────────
+    function ProjectChooser({ ctxInfo, sessionId, notify, onDone, onNew, onCancel }) {
+      const [open, setOpen] = useState('')
+      const bind = async (path) => {
+        try { await api.bind({ session: sessionId, path }); notify('已切换项目'); onDone() } catch (e) { notify(e.message, true) }
+      }
+      const recent = (ctxInfo && ctxInfo.recent) || []
+      return h('div', null,
+        h('div', { className: 'rk-row', style: { marginBottom: 8 } },
+          h('div', { className: 'rk-h rk-grow' }, '选择重构项目'),
+          onCancel ? h('button', { className: 'rk-btn', onClick: onCancel }, '返回') : null),
+        h('div', { className: 'rk-card' },
+          h('b', null, '新建项目'),
+          h('p', { className: 'rk-muted' }, '选择要重构的目录与重构后存放的目录，生成配置。'),
+          h('button', { className: 'rk-btn primary', onClick: onNew }, '新建项目…')),
+        h('div', { className: 'rk-card' },
+          h('b', null, '打开已有项目'),
+          h('p', { className: 'rk-muted' }, '选择一个含 refactorkit.yaml 的目录（重构后存放的目录）。'),
+          open === 'pick'
+            ? h(DirPicker, { title: '选择已有的重构项目目录', start: ctxInfo && ctxInfo.cwd, requireConfig: true, onClose: () => setOpen(''), onPick: bind })
+            : h('button', { className: 'rk-btn', onClick: () => setOpen('pick') }, '选择目录…')),
+        recent.length ? h('div', { className: 'rk-card' },
+          h('b', null, '最近的项目'),
+          recent.map((r) => h('div', { key: r.configFile, className: 'rk-row', style: { marginTop: 6 } },
+            h('div', { className: 'rk-grow', style: { minWidth: 0 } },
+              h('div', null, r.name || '(未命名)'),
+              h('div', { className: 'rk-hint rk-path', title: r.legacyRoot + ' → ' + r.root }, (r.legacyRoot || '?') + '  →  ' + r.root)),
+            h('button', { className: 'rk-btn', onClick: () => bind(r.root) }, '使用')))) : null,
+        ctxInfo && ctxInfo.bound ? h('button', { className: 'rk-link', onClick: async () => { await api.bind({ session: sessionId, unbind: true }); onDone() } }, '解除绑定，改用会话工作目录') : null)
+    }
+
+    // ───────────── 重构过程 ─────────────
+    function ActivityView({ state, root }) {
+      const [task, setTask] = useState('')
+      const [data, setData] = useState(null)
+      const [ev, setEv] = useState(null)
+      const [err, setErr] = useState('')
+      useEffect(() => {
+        let alive = true
+        const load = () => api.activity(root, task).then((d) => { if (alive) { setData(d); setErr('') } }, (e) => alive && setErr(e.message))
+        load()
+        const timer = setInterval(() => { if (document.visibilityState === 'visible') load() }, 3000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [root, task])
+      const showEvidence = async (id) => {
+        try { setEv(await api.evidence(root, id)) } catch (e) { setErr(e.message) }
+      }
+      const items = (data && data.items) || []
+      return h('div', null,
+        h('div', { className: 'rk-row', style: { marginBottom: 8 } },
+          h('select', { className: 'rk-sel', style: { width: 'auto' }, value: task, onChange: (e) => setTask(e.target.value) },
+            h('option', { value: '' }, '全部过程'),
+            ((data && data.tasks) || []).map((t) => h('option', { key: t.id, value: t.id }, t.id + ' ' + t.title + '（' + t.status + '）'))),
+          h('span', { className: 'rk-muted' }, '共 ' + ((data && data.total) || 0) + ' 条记录，每 3 秒自动刷新')),
+        err ? h('p', { className: 'rk-err' }, err) : null,
+        ev ? h('div', { className: 'rk-card' },
+          h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, '证据 ' + ev.id), h('button', { className: 'rk-btn', onClick: () => setEv(null) }, '关闭')),
+          h('div', { className: 'rk-hint rk-path' }, ev.file),
+          h('pre', { className: 'rk-pre' }, ev.text)) : null,
+        items.length === 0 ? h('p', { className: 'rk-muted' }, '还没有过程记录。开始一个任务后，打开任务、分身、加载技能、门禁取证、仲裁、审查与人工审核都会按时间出现在这里。') : null,
+        h('div', { className: 'rk-tl' }, items.map((it, i) => h('div', { key: i, className: 'rk-ev' },
+          h('span', { className: 'rk-dot ' + (it.icon || '') }),
+          h('div', { className: 'rk-row' },
+            h('b', { className: 'rk-grow' }, it.title),
+            h('span', { className: 'rk-hint' }, (it.taskId ? it.taskId + ' · ' : '') + String(it.at || '').replace('T', ' ').slice(5, 19))),
+          it.text ? h('div', { className: 'rk-muted' }, it.text) : null,
+          it.evidenceId ? h('button', { className: 'rk-link', onClick: () => showEvidence(it.evidenceId) }, '查看证据 ' + it.evidenceId) : null))))
     }
 
     // ───────────── 面板 ─────────────
@@ -445,10 +594,11 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null)
       const [err, setErr] = useState('')
       const [tab, setTab] = useState('')
+      const [mode, setMode] = useState('main')
       const [toast, setToast] = useState(null)
       const [catalog, setCatalog] = useState([])
       const [ver, setVer] = useState(0)
-      const refresh = useCallback(() => setVer((v) => v + 1), [])
+      const refresh = useCallback(() => { setMode('main'); setVer((v) => v + 1) }, [])
       const notify = useCallback((msg, isErr) => { setToast({ msg, isErr }); setTimeout(() => setToast(null), 4000) }, [])
 
       useEffect(() => { api.models().then((r) => setCatalog(r.providers || []), () => {}) }, [])
@@ -470,32 +620,40 @@ window.__ModuleLoader__.load({
       const pendingCount = state ? (state.pending || []).length : 0
       const noteCount = state ? (state.notes || []).length : 0
       const active = tab || (pendingCount > 0 ? 'reviews' : 'overview')
-      const tabs = [['reviews', '待审核', pendingCount + noteCount], ['overview', '概览'], ['gaps', '缺口'], ['tasks', '任务'], ['config', '配置']]
+      const tabs = [['reviews', '待审核', pendingCount + noteCount], ['overview', '概览'], ['activity', '过程'], ['gaps', '缺口'], ['tasks', '任务'], ['config', '配置']]
+      const ready = ctxInfo && ctxInfo.initialized && !ctxInfo.error
+      const cwd = ctxInfo && (ctxInfo.suggestedTarget || ctxInfo.cwd)
 
       let body
       if (err && !ctxInfo) body = h('p', { className: 'rk-err' }, err)
       else if (!ctxInfo) body = h('p', { className: 'rk-muted' }, '读取会话…')
-      else if (!ctxInfo.initialized) {
-        body = ctxInfo.cwd
-          ? h(InitView, { cwd: ctxInfo.suggestedTarget || ctxInfo.cwd, catalog, notify, onDone: refresh })
-          : h('p', { className: 'rk-muted' }, '无法确定当前会话的工作目录。请在一个打开了项目目录的会话中使用 RefactorKit。')
+      else if (mode === 'new' || (!ctxInfo.initialized && mode === 'main' && !(ctxInfo.recent || []).length)) {
+        body = h(InitView, { cwd, sessionId, catalog, notify, onDone: refresh, onCancel: (ctxInfo.initialized || (ctxInfo.recent || []).length) ? () => setMode(ctxInfo.initialized ? 'main' : 'choose') : null })
+      } else if (mode === 'choose' || !ctxInfo.initialized) {
+        body = h(ProjectChooser, { ctxInfo, sessionId, notify, onDone: refresh, onNew: () => setMode('new'), onCancel: ctxInfo.initialized ? () => setMode('main') : null })
       } else if (ctxInfo.error) {
-        body = h('div', null, h('p', { className: 'rk-err' }, ctxInfo.error), h('button', { className: 'rk-btn', onClick: refresh }, '重新读取'))
+        body = h('div', null, h('p', { className: 'rk-err' }, ctxInfo.error), h('button', { className: 'rk-btn', onClick: refresh }, '重新读取'), ' ', h('button', { className: 'rk-btn', onClick: () => setMode('choose') }, '切换项目'))
       } else if (!state) body = h('p', { className: 'rk-muted' }, err || '读取项目…')
       else {
         const props = { state, root, refresh, notify }
         body = active === 'reviews' ? h(ReviewsView, props)
+          : active === 'activity' ? h(ActivityView, props)
           : active === 'gaps' ? h(GapsView, props)
           : active === 'tasks' ? h(TasksView, props)
           : active === 'config' ? h(ConfigView, { root, catalog, notify, refresh })
           : h(OverviewView, props)
       }
-      const ready = ctxInfo && ctxInfo.initialized && !ctxInfo.error
+      const showTabs = ready && mode === 'main'
       return h('div', { className: 'rk' },
         h('style', null, CSS),
         h('div', { className: 'rk-head' },
-          h('div', { className: 'rk-title' }, 'RefactorKit', h('span', { className: 'rk-sub' }, ctxInfo ? (ctxInfo.name || ctxInfo.root || ctxInfo.cwd || '') : '')),
-          ready ? h('div', { className: 'rk-tabs' }, tabs.map(([id, label, n]) => h('button', { key: id, className: 'rk-tab' + (active === id ? ' on' : ''), onClick: () => setTab(id) }, label, n ? h('span', { className: 'rk-badge' }, n) : null))) : h('div', { style: { height: 8 } })),
+          h('div', { className: 'rk-title' }, 'RefactorKit', h('span', { className: 'rk-sub rk-grow' }, ready ? (ctxInfo.name || '') : ''),
+            ready && mode === 'main' ? h('button', { className: 'rk-link', onClick: () => setMode('choose') }, '切换项目') : null),
+          ready && mode === 'main' ? h('div', { className: 'rk-proj' },
+            h('span', null, '要重构'), h('span', { className: 'rk-path', title: ctxInfo.legacyRoot }, ctxInfo.legacyRoot),
+            h('span', null, '存放到'), h('span', { className: 'rk-path', title: ctxInfo.targetRoot }, ctxInfo.targetRoot)) : null,
+          ready && mode === 'main' && ctxInfo.outsideSession ? h('div', { className: 'rk-hint', style: { color: 'var(--dsw-alias-state-warn-primary)' } }, '存放目录不在本会话工作目录内：DSH 可能拦截模型写入。建议新建会话并把工作目录设为存放目录。') : null,
+          showTabs ? h('div', { className: 'rk-tabs' }, tabs.map(([id, label, n]) => h('button', { key: id, className: 'rk-tab' + (active === id ? ' on' : ''), onClick: () => setTab(id) }, label, n ? h('span', { className: 'rk-badge' }, n) : null))) : h('div', { style: { height: 8 } })),
         h('div', { className: 'rk-body' }, body, toast ? h('div', { className: 'rk-toast', style: toast.isErr ? { color: 'var(--dsw-alias-state-error-primary)' } : null }, toast.msg) : null))
     }
 
@@ -503,32 +661,62 @@ window.__ModuleLoader__.load({
       return h(Panel, { sessionId: props.sessionId })
     }
 
+    // ───────────── 输入框下方的"重构"按钮（排在"费用明细"之后） ─────────────
+    const pendingStore = { count: 0, listeners: new Set() }
+    function setPendingCount(n) {
+      if (n === pendingStore.count) return
+      pendingStore.count = n
+      for (const fn of pendingStore.listeners) fn(n)
+    }
+    let openPanel = () => {}
+
+    function DockButton(props) {
+      const [n, setN] = useState(pendingStore.count)
+      useEffect(() => {
+        pendingStore.listeners.add(setN)
+        return () => { pendingStore.listeners.delete(setN) }
+      }, [])
+      if (!props.sessionId) return null
+      return h(React.Fragment, null,
+        h('style', null, DOCK_CSS),
+        h('button', { type: 'button', className: 'rk-dock-btn', title: 'RefactorKit：重构项目、审核与过程', 'aria-label': '打开 RefactorKit 重构面板', onClick: () => openPanel() },
+          '重构', n ? h('span', { className: 'rk-dock-n' }, n) : null))
+    }
+
     // ───────────── 注册 ─────────────
     exports.inject = ['slots', 'sidebarRightTabs', 'sidebarRight']
     exports.apply = function apply(ctx) {
+      openPanel = () => { try { ctx.sidebarRight.openTab(TAB_KIND) } catch (e) { console.warn('[refactorkit] 无法打开面板：', e) } }
       ctx.effect(() => ctx.sidebarRightTabs.register({
         id: TAB_ID,
         kind: TAB_KIND,
         priority: 'extension',
         title: () => 'RefactorKit',
-        guide: [{ id: 'refactorkit', order: 60, title: () => 'RefactorKit 重构', description: () => '配置、缺口、任务与审核' }],
+        guide: [{ id: 'refactorkit', order: 60, title: () => 'RefactorKit 重构', description: () => '项目、审核与重构过程' }],
       }), 'refactorkit: tab type')
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab',
         key: TAB_ID,
         inject: (sessionId) => ({ sessionId }),
       }, TabBody)), 'refactorkit: tab body')
+      // 与 dsh-cost-meter 的"费用明细"（conversation.composer.dock，order 1）同一位置，order 2 排在其后
+      ctx.effect(() => ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+        name: 'conversation.composer.dock',
+        id: 'refactorkit-entry',
+        order: 2,
+        inject: () => ({}),
+      }, DockButton)), 'refactorkit: composer dock button')
 
-      // 全局轮询：报到 + 发现新的待审核项时自动打开面板
+      // 全局轮询：报到 + 更新按钮角标 + 发现新的待审核项时自动打开面板
       const seen = new Set()
       const tick = async () => {
         try {
           const r = await call('GET', '/pending')
-          const fresh = (r.pending || []).filter((p) => !seen.has(p.id))
-          for (const p of r.pending || []) seen.add(p.id)
-          if (fresh.length > 0) {
-            try { ctx.sidebarRight.openTab(TAB_KIND) } catch (e) { /* 当前没有会话在屏幕上 */ }
-          }
+          const list = r.pending || []
+          setPendingCount(list.length)
+          const fresh = list.filter((p) => !seen.has(p.id))
+          for (const p of list) seen.add(p.id)
+          if (fresh.length > 0) openPanel()
         } catch (e) { /* Host 未注册路由（如旧版本）时静默 */ }
       }
       ctx.effect(() => {
@@ -539,7 +727,7 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供测试：服务端渲染各视图
-    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, Md }
+    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, DockButton, Md }
 
     module.exports = exports
     return module.exports
