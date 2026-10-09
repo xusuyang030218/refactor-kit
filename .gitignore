@@ -4,3 +4,4 @@ node_modules/
 tests/.tmp/
 examples/*/.run/
 examples/*/refactorkit.draft.yaml
+.profile-backup/
