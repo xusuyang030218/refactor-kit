@@ -50,6 +50,7 @@ window.__ModuleLoader__.load({
       evidence: (root, id) => call('GET', '/evidence', { root, id }),
       gitRepo: (url) => call('GET', '/git/repo', { url }),
       gitClone: (payload) => call('POST', '/git/clone', payload),
+      version: () => call('GET', '/version'),
     }
 
     // ───────────── 样式（主题令牌） ─────────────
@@ -116,6 +117,8 @@ window.__ModuleLoader__.load({
 .rk-tech .a{font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .rk-guide{border:1px solid var(--dsw-alias-state-business-primary);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--dsw-alias-bg-layer-2)}
 .rk-guide-step{display:inline-block;font-size:11px;padding:0 8px;border-radius:999px;background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-inverted)}
+.rk-ver{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.rk-ver:hover{color:var(--dsw-alias-link)}
 .rk-reportwrap{display:flex;flex-direction:column;height:100%;min-height:0}
 .rk-report{flex:1;min-height:420px;width:100%;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base)}
 .rk-proj{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin-top:6px}
@@ -986,11 +989,13 @@ window.__ModuleLoader__.load({
       const [mode, setMode] = useState('main')
       const [toast, setToast] = useState(null)
       const [catalog, setCatalog] = useState([])
+      const [build, setBuild] = useState(null)
       const [ver, setVer] = useState(0)
       const refresh = useCallback(() => { setMode('main'); setVer((v) => v + 1) }, [])
       const notify = useCallback((msg, isErr) => { setToast({ msg, isErr }); setTimeout(() => setToast(null), 4000) }, [])
 
       useEffect(() => { api.models().then((r) => setCatalog(r.providers || []), () => {}) }, [])
+      useEffect(() => { api.version().then(setBuild, () => {}) }, [])
       useEffect(() => {
         let alive = true
         api.context(sessionId).then((c) => { if (alive) { setCtxInfo(c); setErr('') } }, (e) => alive && setErr(e.message))
@@ -1038,7 +1043,14 @@ window.__ModuleLoader__.load({
         h('style', null, CSS),
         h('div', { className: 'rk-head' },
           h('div', { className: 'rk-title' }, 'RefactorKit', h('span', { className: 'rk-sub rk-grow' }, ready ? (ctxInfo.name || '') : ''),
-            ready && mode === 'main' ? h('button', { className: 'rk-link', onClick: () => setMode('choose') }, '切换项目') : null),
+            ready && mode === 'main' ? h('button', { className: 'rk-link', onClick: () => setMode('choose') }, '切换项目') : null,
+            h('button', {
+              className: 'rk-link rk-ver',
+              title: build
+                ? `当前加载的客户端代码：${build.clientModifiedAt ? new Date(build.clientModifiedAt).toLocaleString() : '未知'}（v${build.version}）\n改了插件代码后点这里重新加载即可生效，不必重启 DSH`
+                : '重新加载面板',
+              onClick: () => window.location.reload(),
+            }, '↻ ' + (build ? `v${build.version} · ${build.clientModifiedAt ? new Date(build.clientModifiedAt).toLocaleTimeString('zh-CN', { hour12: false }) : ''}` : '重新加载'))),
           ready && mode === 'main' ? h('div', { className: 'rk-proj' },
             h('span', null, '要重构'), h('span', { className: 'rk-path', title: ctxInfo.legacyRoot }, ctxInfo.legacyRoot),
             h('span', null, '存放到'), h('span', { className: 'rk-path', title: ctxInfo.targetRoot }, ctxInfo.targetRoot)) : null,
@@ -1127,3 +1139,4 @@ window.__ModuleLoader__.load({
     return module.exports
   },
 })
+

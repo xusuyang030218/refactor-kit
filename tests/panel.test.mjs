@@ -252,6 +252,14 @@ describe('目录选择、项目绑定与重构过程', () => {
     assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-ask', args: {} })).status, 400, '关注点必填')
   })
 
+  test('version：返回插件版本与客户端文件时间（用来判断代码是否已生效）', async () => {
+    const r = await api.handle('GET', '/version', q())
+    assert.equal(r.status, 200)
+    assert.match(r.body.version, /^\d+\.\d+\.\d+$/)
+    assert.ok(r.body.clientModifiedAt, '应返回客户端文件修改时间')
+    assert.ok(Number.isFinite(Date.parse(r.body.clientModifiedAt)), '时间应可解析')
+  })
+
   test('report：返回看板 HTML 文本（面板内嵌用）', async () => {
     const r = await api.handle('GET', '/report', q({ root: target }))
     assert.equal(r.status, 200)
@@ -472,6 +480,9 @@ describe('浏览器端', () => {
     const techHtml = render(T.OverviewView, { ...props, state: withProposal })
     for (const s of ['建议：前端框架', 'Vue 3', '推荐', '采纳', '理由：生态成熟', '成本：中', '风险：需重写模板', '忽略这条建议', '等待模型回答']) assert.ok(techHtml.includes(s), `建议卡缺少：${s}`)
     assert.ok(render(T.ReportView, { root: 'D:/t' }).includes('<iframe'), '报告页应内嵌 iframe')
+    // 版本与"重新加载"入口：面板可自查当前加载的是哪份客户端代码
+    const panelHtml = render(T.Panel, { sessionId: 's' })
+    assert.ok(panelHtml.includes('rk-ver'), '面板头部应有版本/重新加载按钮')
     const legacyDlg = render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', mode: 'legacy', onPick: noop, onClose: noop })
     for (const s of ['此电脑', '系统对话框…', '取消', '显示隐藏']) assert.ok(legacyDlg.includes(s), `目录对话框缺少：${s}`)
     assert.ok(!legacyDlg.includes('新建文件夹'), '要重构的目录（只读）不提供新建文件夹')

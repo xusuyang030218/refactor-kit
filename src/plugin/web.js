@@ -1,13 +1,16 @@
 // 面板的 Host 同源路由（08 文档第 4 节）。只接受本机请求；webServer 可选注入，headless 下不注册。
 import { execFile } from 'node:child_process'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import { CONFIG_FILE, exists, findConfig, nowIso, parseConfig, renderConfigYaml, summarizeGaps } from '../core/index.js'
 import { draftForInit, openProject } from '../app/project.js'
 import { answer, listPending, samePath, touchPanel } from './broker.js'
 import { bindSession, recentProjects, sessionConfig, touchProject, unbindSession } from './registry.js'
 
+/** 插件根目录（用于读取自身 package.json 与 client 目录）。 */
+const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const pctText = (x) => `${(Number(x ?? 0) * 100).toFixed(0)}%`
 
 /** 把决策日志条目翻译成人能读的一行（"过程"视图）。 */
@@ -294,6 +297,18 @@ export function createApi(services = {}) {
         techRequests: techDoc.requests ?? [],
         techProposals: techDoc.proposals ?? [],
       }
+    },
+
+    // 版本：让面板显示当前加载的是哪一份客户端代码，避免"改了代码但没生效"反复发生
+    'GET /version': async () => {
+      const clientFile = join(PLUGIN_ROOT, 'client', 'index.js')
+      const [st, pkgText] = await Promise.all([
+        stat(clientFile).catch(() => null),
+        readFile(join(PLUGIN_ROOT, 'package.json'), 'utf8').catch(() => '{}'),
+      ])
+      let version = '0.0.0'
+      try { version = JSON.parse(pkgText).version ?? version } catch { /* 忽略 */ }
+      return { version, clientModifiedAt: st ? new Date(st.mtimeMs).toISOString() : null, clientBytes: st?.size ?? null }
     },
 
     // 报告：生成最新看板并返回 HTML 文本（面板内嵌显示，不必去文件系统找）

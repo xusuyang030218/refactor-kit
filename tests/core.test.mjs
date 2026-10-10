@@ -285,6 +285,23 @@ describe('config + policy + blocks', () => {
 })
 
 describe('ledger + status + report + detect', () => {
+  test('原子写能扛住并发写同一文件（Windows rename 抖动重试）', async () => {
+    const dir = join(tmp, 'atomic')
+    const f = join(dir, 'x.json')
+    // 50 个并发原子写同一路径：Windows 上 rename 覆盖被占用目标会抛 EPERM/EBUSY/EIO
+    await Promise.all(Array.from({ length: 50 }, (_, i) => core.atomicWriteJson(f, { i })))
+    const last = await core.readJson(f)
+    assert.ok(Number.isInteger(last.i), '文件应是完整的合法 JSON，不是半截内容')
+    // 连续写 100 次也不应失败
+    for (let i = 0; i < 100; i++) await core.atomicWriteJson(f, { i })
+    assert.equal((await core.readJson(f)).i, 99)
+    // 追加写同样可重试
+    const j = join(dir, 'log.jsonl')
+    await Promise.all(Array.from({ length: 30 }, (_, i) => core.appendLine(j, JSON.stringify({ i }))))
+    const lines = (await readFile(j, 'utf8')).split('\n').filter(Boolean)
+    assert.equal(lines.length, 30)
+  })
+
   test('并发更新任务不丢写', async () => {
     const ledger = new core.Ledger(join(tmp, 'ledger', '.refactorkit'))
     await ledger.updateTasks((doc) => { doc.tasks.push({ id: core.nextTaskId(doc), contract: [], n: 0 }) })
