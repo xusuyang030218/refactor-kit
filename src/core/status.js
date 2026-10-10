@@ -73,7 +73,7 @@ export function computeStatus(input) {
   } else {
     state = 'ready'
     nextSteps.push(summary
-      ? `缺口：缺失 ${summary.missing}、部分 ${summary.partial}。按用户意图选择缺口，用 rk_task_open 写契约（将触发 CP2）。`
+      ? `缺口：缺失 ${summary.missing}、部分 ${summary.partial}。若用户没指定从哪开始：先用 rk_gaps（op=list，按端点数排序）挑 3-5 个最值得先做的缺口，给出建议顺序和理由让用户选；用户选定后 rk_task_open 写契约（触发 CP2）。若技术方向未定（框架版本 / 数据迁移 / 前后端边界），先 rk_tech_advise 给方案。`
       : '调用 rk_gaps（op=refresh）生成缺口清单。')
   }
   if (pending.some((p) => p.kind === 'notify-unread')) nextSteps.push(`另有 ${pending.filter((p) => p.kind === 'notify-unread').length} 份审核材料待用户阅读（不阻塞）。`)

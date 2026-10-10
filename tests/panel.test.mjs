@@ -442,7 +442,29 @@ describe('浏览器端', () => {
     for (const s of ['新建项目…', '打开已有项目', '最近的项目', 'DTS', '解除绑定']) assert.ok(chooser.includes(s), `项目选择缺少：${s}`)
     assert.ok(render(T.ActivityView, props).includes('全部过程'))
     const overview = render(T.OverviewView, props)
-    for (const s of ['重构路线', '盘点', '技术选型', '实施', '验证', '收尾', '从这开始']) assert.ok(overview.includes(s), `概览缺少：${s}`)
+    for (const s of ['重构路线', '盘点', '缺口清单', '技术选型', '实施', '验证', '收尾', '从这开始']) assert.ok(overview.includes(s), `概览缺少：${s}`)
+    // 阶段顺序：盘点 → 缺口清单 → 技术选型 → 实施 → 验证 → 收尾
+    assert.deepEqual(JSON.parse(JSON.stringify(T.stageList(state))).map((s) => s.t), ['盘点', '缺口清单', '技术选型', '实施', '验证', '收尾'])
+    // 缺口页：怎么开始 + 每行「开始重构」
+    const gapsHtml = render(T.GapsView, props)
+    for (const s of ['怎么开始', '开始重构', '对应', '裁撤']) assert.ok(gapsHtml.includes(s), `缺口页缺少：${s}`)
+    assert.match(T.startInstruction({ id: 'G-A', className: 'AController' }, 'DTS'), /rk_task_open 开始重构缺口 G-A/)
+    // 如何开始：按状态给出唯一下一步
+    const guideOf = (st) => render(T.StartGuide, { state: st, root: 'D:/t', busy: '', run: noop, onTab: noop, notify: noop })
+    const base = { status: {}, tasks: [], tech: [], gaps: [], pending: [], techRequests: [] }
+    assert.match(guideOf({ ...base }), /第 1 步/)
+    assert.match(guideOf({ ...base }), /开始盘点/)
+    assert.match(guideOf({ ...base, survey: { weighted: 0.1 } }), /第 2 步/)
+    assert.match(guideOf({ ...base, survey: { weighted: 0.1 } }), /生成缺口清单/)
+    const withGaps = { ...base, survey: {}, gapSummary: { total: 3, missing: 2, partial: 1, covered: 0, retired: 0 }, gaps: [{ id: 'G-A', endpoints: 9, status: 'missing' }, { id: 'G-B', endpoints: 1, status: 'missing' }] }
+    assert.match(guideOf(withGaps), /第 4 步/)
+    assert.match(guideOf(withGaps), /去缺口页挑一个/)
+    assert.match(guideOf(withGaps), /G-A（9 个端点）/)
+    assert.match(guideOf({ ...withGaps, tasks: [{ id: 'T-01', title: 'x', status: 'OPEN' }] }), /继续推进 T-01/)
+    assert.match(guideOf({ ...withGaps, tasks: [{ id: 'T-02', title: 'x', status: 'BLOCKED' }] }), /已阻塞/)
+    assert.match(guideOf({ ...withGaps, pending: [{ id: 'p1' }] }), /等你审核/)
+    assert.match(guideOf({ ...withGaps, pending: [{ id: 'p1' }] }), /去审核/)
+    assert.match(guideOf({ ...base, survey: {}, gapSummary: { total: 0, missing: 0, partial: 0, covered: 0, retired: 0 }, tasks: [{ id: 'T-01', title: 'x', status: 'DONE', results: { A1: { verdict: 'pass' } } }] }), /缺口已清零/)
     for (const s of ['请模型给建议', '＋ 自己记录']) assert.ok(overview.includes(s), `技术选型区缺少：${s}`)
     assert.ok(!overview.includes('理由（必填）'), '自己记录表单默认收起')
     // 有待采纳建议时：显示方案、理由、成本、风险与采纳按钮

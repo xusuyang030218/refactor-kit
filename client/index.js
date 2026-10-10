@@ -110,6 +110,8 @@ window.__ModuleLoader__.load({
 .rk-step.skip{opacity:.55}
 .rk-tech{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 8px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-1)}
 .rk-tech .a{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.rk-guide{border:1px solid var(--dsw-alias-state-business-primary);border-radius:10px;padding:10px 12px;margin-bottom:14px;background:var(--dsw-alias-bg-layer-2)}
+.rk-guide-step{display:inline-block;font-size:11px;padding:0 8px;border-radius:999px;background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-inverted)}
 .rk-reportwrap{display:flex;flex-direction:column;height:100%;min-height:0}
 .rk-report{flex:1;min-height:420px;width:100%;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base)}
 .rk-proj{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin-top:6px}
@@ -257,29 +259,96 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────── 概览 ─────────────
-    function Roadmap({ state }) {
+    /** 重构阶段推导：顺序固定为 盘点 → 缺口清单 → 技术选型(可选) → 实施 → 验证 → 收尾。 */
+    function stageList(state) {
       const tech = state.tech || []
       const tasks = state.tasks || []
       const g = state.gapSummary
       const anyPass = tasks.some((t) => t.results && Object.values(t.results).some((r) => r && r.verdict === 'pass'))
       const anyDone = tasks.some((t) => t.status === 'DONE')
-      const allClear = g && g.missing === 0 && g.partial === 0 && (tasks.length === 0 || tasks.every((t) => t.status === 'DONE' || t.status === 'ABANDONED'))
-      const started = tasks.length > 0 || (g && g.covered > 0)
-      const stages = [
-        { key: 'survey', n: 1, t: '盘点', done: !!state.survey, skip: false, h: '扫描新旧仓库，算出缺口' },
-        { key: 'tech', n: 2, t: '技术选型', done: tech.length > 0, skip: tech.length === 0 && started, h: '框架/版本/数据迁移方案' },
-        { key: 'impl', n: 3, t: '实施', done: anyDone, skip: false, h: '按缺口分任务迁移' },
-        { key: 'verify', n: 4, t: '验证', done: anyPass, skip: false, h: '门禁取证' },
-        { key: 'finish', n: 5, t: '收尾', done: allClear, skip: false, h: '缺口清零/裁撤，验收' },
+      const allClear = Boolean(g) && g.missing === 0 && g.partial === 0 && tasks.every((t) => t.status === 'DONE' || t.status === 'ABANDONED')
+      const downstreamStarted = tasks.length > 0 || anyPass || anyDone
+      return [
+        { key: 'survey', t: '盘点', done: !!state.survey, skip: false, h: '扫描新旧仓库，看清家底' },
+        { key: 'gaps', t: '缺口清单', done: Boolean(g), skip: false, h: '算出哪些还没迁移' },
+        { key: 'tech', t: '技术选型', done: tech.length > 0, skip: tech.length === 0 && (downstreamStarted || Boolean(g)), h: '框架/版本/数据迁移方案（可选）' },
+        { key: 'impl', t: '实施', done: anyDone, skip: false, h: '挑缺口开任务，逐块迁移' },
+        { key: 'verify', t: '验证', done: anyPass, skip: false, h: '跑门禁，留下证据' },
+        { key: 'finish', t: '收尾', done: allClear, skip: false, h: '缺口清零或裁撤，验收' },
       ]
-      const firstActive = stages.find((s) => !s.done && !s.skip)
-      return h('div', { className: 'rk-steps' }, stages.map((s) => {
-        const active = firstActive && firstActive.key === s.key
+    }
+
+    function Roadmap({ state }) {
+      const stages = stageList(state)
+      const firstActive = stages.findIndex((s) => !s.done && !s.skip)
+      return h('div', { className: 'rk-steps' }, stages.map((s, i) => {
+        const active = i === firstActive
         return h('div', { key: s.key, className: 'rk-step' + (s.done ? ' done' : active ? ' act' : s.skip ? ' skip' : '') },
-          h('div', { className: 'n' }, '第 ' + s.n + ' 步'),
+          h('div', { className: 'n' }, '第 ' + (i + 1) + ' 步'),
           h('div', { className: 't' }, (s.done ? '✓ ' : active ? '▶ ' : '') + s.t),
           h('div', { className: 'h' }, active ? '从这开始：' + s.h : s.h))
       }))
+    }
+
+    /**
+     * 如何开始：按当前状态给出**唯一**的下一步动作，能点的直接给按钮。
+     * 这是用户打开面板第一眼要看的东西，刻意排在概览最上方。
+     */
+    function StartGuide({ state, root, busy, run, onTab, notify }) {
+      const g = state.gapSummary
+      const tasks = state.tasks || []
+      const pending = state.pending || []
+      const open = tasks.filter((t) => t.status === 'OPEN')
+      const blocked = tasks.filter((t) => t.status === 'BLOCKED')
+      const stages = stageList(state)
+      const active = stages.find((s) => !s.done && !s.skip)
+      let step = ''
+      let title = ''
+      let hint = ''
+      let actions = null
+      if (pending.length > 0) {
+        step = '等你审核'; title = `有 ${pending.length} 项在等你决定`
+        hint = '模型停在这里等你点确认，处理完它会继续。'
+        actions = [h('button', { key: 'a', className: 'rk-btn primary', onClick: () => onTab('reviews') }, '去审核')]
+      } else if (!state.survey) {
+        step = '第 1 步'; title = '先盘点：看清老系统有什么、新系统已经做了什么'
+        hint = '这一步只读扫描，不改任何文件，几秒钟出结果。'
+        actions = [h('button', { key: 'a', className: 'rk-btn primary', disabled: !!busy, onClick: () => run('survey', '盘点') }, busy === 'survey' ? '盘点中…' : '开始盘点')]
+      } else if (!g) {
+        step = '第 2 步'; title = '生成缺口清单：算出还有哪些没迁移'
+        hint = '按类名对应关系比对老新两边，得到缺口列表和覆盖率。'
+        actions = [h('button', { key: 'a', className: 'rk-btn primary', disabled: !!busy, onClick: () => run('gaps', '刷新缺口') }, busy === 'gaps' ? '计算中…' : '生成缺口清单')]
+      } else if (blocked.length > 0) {
+        step = '被卡住'; title = `${blocked.map((t) => t.id).join('、')} 已阻塞`
+        hint = '连续失败或超出预算，需要你决定：继续、改契约还是放弃。'
+        actions = [h('button', { key: 'a', className: 'rk-btn primary', onClick: () => onTab('tasks') }, '去处理')]
+      } else if (open.length > 0) {
+        step = '进行中'; title = `继续推进 ${open.map((t) => t.id).join('、')}`
+        hint = '对模型说"继续"，或去任务页看它缺什么证据。'
+        actions = [h('button', { key: 'a', className: 'rk-btn', onClick: () => onTab('tasks') }, '看任务详情')]
+      } else if (g.missing + g.partial > 0) {
+        const biggest = [...(state.gaps || [])].filter((x) => x.status === 'missing' || x.status === 'partial').sort((a, b) => (b.endpoints || 0) - (a.endpoints || 0)).slice(0, 3)
+        step = '第 4 步'; title = '挑一个缺口，开始重构'
+        hint = '在缺口页点「开始重构」会复制一句指令，粘贴到对话发给模型即可；模型会先写验收契约交你确认。'
+        actions = [h('button', { key: 'a', className: 'rk-btn primary', onClick: () => onTab('gaps') }, '去缺口页挑一个')]
+        if (biggest.length) {
+          actions.push(h('div', { key: 'b', className: 'rk-hint', style: { marginTop: 6 } }, '最大的三个缺口：' + biggest.map((b) => `${b.id}（${b.endpoints} 个端点）`).join('、')))
+        }
+      } else if (active) {
+        step = '第 ' + (stages.indexOf(active) + 1) + ' 步'; title = active.h
+        hint = '按阶段条继续往下走即可。'
+      } else {
+        step = '完成'; title = '缺口已清零，重构收尾'
+        hint = '可以去报告页导出看板，或开始下一个项目。'
+        actions = [h('button', { key: 'a', className: 'rk-btn', onClick: () => onTab('report') }, '看报告')]
+      }
+      const techPending = (state.techRequests || []).filter((r) => r.status === 'pending').length
+      return h('div', { className: 'rk-guide' },
+        h('div', { className: 'rk-guide-step' }, step),
+        h('div', { className: 'rk-h', style: { margin: '4px 0 2px' } }, title),
+        h('div', { className: 'rk-hint' }, hint),
+        techPending ? h('div', { className: 'rk-hint', style: { marginTop: 4 } }, `另有 ${techPending} 条技术选型咨询等模型回答（在下面「技术选型」区）。`) : null,
+        actions ? h('div', { className: 'rk-row', style: { marginTop: 8 } }, actions) : null)
     }
 
     function TechView({ state, root, refresh, notify }) {
@@ -353,7 +422,7 @@ window.__ModuleLoader__.load({
         h('iframe', { className: 'rk-report', src, title: 'RefactorKit 报告', onError: () => setErr('报告加载失败，可点「新窗口打开」') }))
     }
 
-    function OverviewView({ state, root, refresh, notify }) {
+    function OverviewView({ state, root, refresh, notify, onTab }) {
       const [busy, setBusy] = useState('')
       const run = async (op, label) => {
         setBusy(op)
@@ -363,18 +432,19 @@ window.__ModuleLoader__.load({
       const g = state.gapSummary
       const kpi = (v, l) => h('div', { className: 'rk-kpi', key: l }, h('b', null, v), h('span', null, l))
       return h('div', null,
+        h(StartGuide, { state, root, busy, run, onTab, notify }),
         h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '重构路线'), h(Roadmap, { state })),
         h('div', { className: 'rk-sec' },
           h('div', { className: 'rk-row' }, h('span', { className: 'rk-grow' }, '状态：', h(Pill, { v: s.state || '-' })), h('span', { className: 'rk-muted' }, '审核预设 ' + state.preset)),
           h('div', { className: 'rk-row', style: { marginTop: 8 } },
             h('button', { className: 'rk-btn', disabled: !!busy, onClick: () => run('survey', '盘点') }, busy === 'survey' ? '盘点中…' : '盘点新旧仓库'),
             h('button', { className: 'rk-btn', disabled: !!busy || !state.survey, onClick: () => run('gaps', '刷新缺口') }, busy === 'gaps' ? '计算中…' : '刷新缺口'),
-            h('button', { className: 'rk-btn', disabled: !!busy, onClick: () => run('report', '看板') }, '生成看板'))),
+            h('button', { className: 'rk-btn', disabled: !!busy, onClick: () => onTab('report') }, '看报告'))),
         h(TechView, { state, root, refresh, notify }),
         g ? h('div', { className: 'rk-sec' }, h('div', { className: 'rk-kpis' },
           kpi(g.total, '缺口'), kpi(g.missing, '缺失'), kpi(g.partial, '部分'), kpi(g.covered, '已覆盖'), kpi(g.retired, '已裁撤'), kpi(pct(g.endpointCoverage), '端点覆盖（估算）'),
           state.survey ? kpi(pct(state.survey.weighted), '文件数加权') : null)) : null,
-        h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '下一步'), (s.nextSteps || []).map((x, i) => h('p', { key: i }, '• ' + x))),
+        (s.nextSteps || []).length ? h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '模型看到的下一步（原始提示）'), s.nextSteps.map((x, i) => h('p', { key: i, className: 'rk-muted' }, '• ' + x))) : null,
         h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '任务'),
           (state.tasks || []).length === 0 ? h('p', { className: 'rk-muted' }, '还没有任务。在对话中说"把缺口 X 做完"，模型会写契约并提交审核。') : null,
           (state.tasks || []).map((t) => h('div', { key: t.id, className: 'rk-row' }, h(Pill, { v: t.status }), h('span', { className: 'rk-grow' }, t.id + ' ' + t.title), h('span', { className: 'rk-muted' }, (t.risk && t.risk.level) || (t.riskEstimate && t.riskEstimate.level + '(预估)') || '')))),
@@ -382,12 +452,35 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────── 缺口 ─────────────
-    function GapRow({ g, root, controllers, refresh, notify }) {
+    /** 缺口 → 可粘贴给模型的一句话指令（插件无法直接向会话发消息，所以复制用）。 */
+    const startInstruction = (g, projectName) => `请用 rk_task_open 开始重构缺口 ${g.id}${g.className ? `（老系统 ${g.className}）` : ''}${projectName ? `，项目 ${projectName}` : ''}。先读老系统对应代码确认现状，再写可验证的验收契约交我审核。`
+
+    async function copyText(text, notify) {
+      try {
+        if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); notify('已复制，粘贴到对话发给模型即可'); return }
+        throw new Error('no clipboard')
+      } catch {
+        try {
+          const ta = document.createElement('textarea')
+          ta.value = text
+          ta.style.position = 'fixed'
+          ta.style.opacity = '0'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+          notify('已复制，粘贴到对话发给模型即可')
+        } catch { notify('复制失败，请手动输入：' + text, true) }
+      }
+    }
+
+    function GapRow({ g, root, controllers, refresh, notify, projectName }) {
       const [mode, setMode] = useState('')
       const [val, setVal] = useState('')
       const act = async (op, args, done) => {
         try { const r = await api.action(root, op, args); notify(r.message); setMode(''); refresh() } catch (e) { notify(e.message, true) }
       }
+      const startable = g.status === 'missing' || g.status === 'partial'
       return h(React.Fragment, null,
         h('tr', null,
           h('td', null, g.id, g.note ? h('div', { className: 'rk-hint' }, g.note) : null),
@@ -396,6 +489,7 @@ window.__ModuleLoader__.load({
           h('td', null, h(Pill, { v: g.status })),
           h('td', null, g.basis, h('div', { className: 'rk-hint' }, (g.mappedTo || []).join(', ') || '—')),
           h('td', null, h('div', { className: 'rk-row' },
+            startable ? h('button', { className: 'rk-btn primary', title: '复制一句指令，粘贴到对话即可开始这个缺口的重构', onClick: () => copyText(startInstruction(g, projectName), notify) }, '开始重构') : null,
             h('button', { className: 'rk-btn', onClick: () => { setMode('map'); setVal((g.mappedTo || []).join(', ')) } }, '对应'),
             g.status === 'retired'
               ? h('button', { className: 'rk-btn', onClick: () => act('unretire', { ids: [g.id] }) }, '撤销裁撤')
@@ -431,10 +525,11 @@ window.__ModuleLoader__.load({
           h('select', { className: 'rk-sel', style: { width: 'auto' }, value: status, onChange: (e) => setStatus(e.target.value) },
             [['open', '未覆盖（缺失+部分）'], ['all', '全部'], ['missing', '缺失'], ['partial', '部分'], ['covered', '已覆盖'], ['retired', '已裁撤']].map(([v, l]) => h('option', { key: v, value: v }, l))),
           h('input', { className: 'rk-in rk-grow', placeholder: '搜索缺口或新类名', value: q, onChange: (e) => setQ(e.target.value) })),
+        h('p', { className: 'rk-hint' }, '怎么开始：挑一个缺口点「开始重构」，会复制一句指令，粘贴到对话发给模型即可（它会先写验收契约交你确认）。'),
         h('p', { className: 'rk-hint' }, '依据：name / alias 是按类名推断的对应关系，请核对；不对的点「对应」改正。覆盖率对 name / alias / mapping 为按端点数估算。'),
         h('table', { className: 'rk-tbl' },
           h('thead', null, h('tr', null, ['缺口', '端点', '覆盖', '状态', '依据 / 对应', ''].map((x) => h('th', { key: x }, x)))),
-          h('tbody', null, list.slice(0, 200).map((g) => h(GapRow, { key: g.id, g, root, refresh, notify })))),
+          h('tbody', null, list.slice(0, 200).map((g) => h(GapRow, { key: g.id, g, root, refresh, notify, projectName: (state.status && state.status.project && state.status.project.name) || '' })))),
         list.length > 200 ? h('p', { className: 'rk-hint' }, '仅显示前 200 条，请用筛选或搜索缩小范围。') : null)
     }
 
@@ -925,7 +1020,7 @@ window.__ModuleLoader__.load({
         body = h('div', null, h('p', { className: 'rk-err' }, ctxInfo.error), h('button', { className: 'rk-btn', onClick: refresh }, '重新读取'), ' ', h('button', { className: 'rk-btn', onClick: () => setMode('choose') }, '切换项目'))
       } else if (!state) body = h('p', { className: 'rk-muted' }, err || '读取项目…')
       else {
-        const props = { state, root, refresh, notify }
+        const props = { state, root, refresh, notify, onTab: setTab }
         body = active === 'reviews' ? h(ReviewsView, props)
           : active === 'report' ? h(ReportView, { root })
           : active === 'activity' ? h(ActivityView, props)
@@ -1022,7 +1117,7 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供测试：服务端渲染各视图
-    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, ReportView, Roadmap, TechView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, PathField, DockButton, Md, pickSystemDirectory, setClientCtx, crumbsOf }
+    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, ReportView, Roadmap, stageList, StartGuide, TechView, GapsView, GapRow, startInstruction, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, PathField, DockButton, Md, pickSystemDirectory, setClientCtx, crumbsOf }
 
     module.exports = exports
     return module.exports
