@@ -271,10 +271,13 @@ describe('浏览器端', () => {
     vm.runInNewContext(code, sandbox, { filename: 'client/index.js' })
     assert.equal(loaded.id, 'dsh-plugin-refactorkit')
     const table = { react: require('react') }
-    return loaded.factory((name) => {
+    const mod = loaded.factory((name) => {
       if (!(name in table)) throw new Error(`客户端引用了平台未提供的模块：${name}`)
       return table[name]
     })
+    // 客户端代码里的 globalThis / fetch 指向沙箱对象
+    Object.defineProperty(mod, '__sandbox', { value: sandbox, enumerable: false })
+    return mod
   }
 
   test('模块协议：只依赖 react；注册右侧栏标签与正文', async () => {
@@ -304,7 +307,9 @@ describe('浏览器端', () => {
   })
 
   test('各视图服务端渲染无错误，并包含关键内容', async () => {
-    const { __test: T } = await loadClient()
+    const client = await loadClient()
+    const { __test: T } = client
+    const sb = client.__sandbox
     const { renderToString } = require('react-dom/server')
     const React = require('react')
     const render = (C, p) => renderToString(React.createElement(C, p))
@@ -348,6 +353,16 @@ describe('浏览器端', () => {
     assert.ok(render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', onPick: noop, onClose: noop }).includes('用系统对话框选择'))
     assert.ok(render(T.DockButton, { sessionId: 's' }).includes('重构'))
     assert.equal(render(T.DockButton, {}), '', '没有会话时不显示')
+    // 系统对话框：Desktop 的 preload 接口优先，其次 Host，都没有时返回 undefined
+    sb.__DSH_DIRECTORY_PICKER__ = { pick: async () => 'D:\\DTS\\legacy' }
+    assert.equal(await T.pickSystemDirectory(), 'D:\\DTS\\legacy')
+    sb.__DSH_DIRECTORY_PICKER__ = { pick: async () => null }
+    assert.equal(await T.pickSystemDirectory(), null, '取消返回 null')
+    delete sb.__DSH_DIRECTORY_PICKER__
+    sb.fetch = async () => ({ ok: true, json: async () => ({ supported: false }) })
+    assert.equal(await T.pickSystemDirectory(), undefined)
+    sb.fetch = async () => ({ ok: true, json: async () => ({ supported: true, path: 'E:\\x' }) })
+    assert.equal(await T.pickSystemDirectory(), 'E:\\x')
     assert.ok(render(T.Panel, { sessionId: 's' }).includes('读取会话'))
   })
 })

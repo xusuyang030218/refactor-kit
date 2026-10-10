@@ -434,6 +434,22 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────── 目录选择 ─────────────
+    /**
+     * 打开系统文件夹对话框。返回所选路径；取消返回 null；当前环境不支持返回 undefined。
+     * DSH Desktop：Electron preload 暴露 globalThis.__DSH_DIRECTORY_PICKER__.pick()（与官方 directory-picker-native 相同）；
+     * 浏览器访问本机 Web：由 Host 的 directoryPicker 服务弹出。
+     */
+    async function pickSystemDirectory() {
+      const desktop = globalThis.__DSH_DIRECTORY_PICKER__
+      if (desktop && typeof desktop.pick === 'function') {
+        const path = await desktop.pick()
+        return path == null ? null : String(path)
+      }
+      const r = await api.pick()
+      if (!r.supported) return undefined
+      return r.path ?? null
+    }
+
     function DirPicker({ title, start, onPick, onClose, requireConfig }) {
       const [path, setPath] = useState(start || '')
       const [data, setData] = useState(null)
@@ -447,9 +463,9 @@ window.__ModuleLoader__.load({
       useEffect(() => { load(start || '') }, [])
       const system = async () => {
         try {
-          const r = await api.pick()
-          if (!r.supported) { setNoNative(true); return }
-          if (r.path) onPick(r.path)
+          const path = await pickSystemDirectory()
+          if (path === undefined) { setNoNative(true); return }
+          if (path) onPick(path)
         } catch (e) { setErr(e.message) }
       }
       const canPick = path && (!requireConfig || (data && data.hasConfig))
@@ -730,7 +746,7 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供测试：服务端渲染各视图
-    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, DockButton, Md }
+    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, DockButton, Md, pickSystemDirectory }
 
     module.exports = exports
     return module.exports
