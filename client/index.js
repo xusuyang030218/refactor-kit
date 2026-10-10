@@ -699,13 +699,16 @@ window.__ModuleLoader__.load({
         key: TAB_ID,
         inject: (sessionId) => ({ sessionId }),
       }, TabBody)), 'refactorkit: tab body')
-      // 与 dsh-cost-meter 的"费用明细"（conversation.composer.dock，order 1）同一位置，order 2 排在其后
-      ctx.effect(() => ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
-        name: 'conversation.composer.dock',
-        id: 'refactorkit-entry',
-        order: 2,
-        inject: () => ({}),
-      }, DockButton)), 'refactorkit: composer dock button')
+      // dsh-cost-meter 的"费用明细"同时出现在会话顶部（conversation.session.header.actions）与输入框下方
+      // （conversation.composer.dock），order 都是 1；本按钮在两处都以 order 2 排在其后
+      for (const slot of ['conversation.composer.dock', 'conversation.session.header.actions']) {
+        ctx.effect(() => ctx.slots.inject(slot, () => ctx.slots.register({
+          name: slot,
+          id: 'refactorkit-entry',
+          order: 2,
+          inject: () => ({}),
+        }, DockButton)), 'refactorkit: entry button ' + slot)
+      }
 
       // 全局轮询：报到 + 更新按钮角标 + 发现新的待审核项时自动打开面板
       const seen = new Set()
