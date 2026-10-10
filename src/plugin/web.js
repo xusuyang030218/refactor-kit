@@ -1,6 +1,7 @@
 // 面板的 Host 同源路由（08 文档第 4 节）。只接受本机请求；webServer 可选注入，headless 下不注册。
+import { execFile } from 'node:child_process'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import YAML from 'yaml'
 import { CONFIG_FILE, exists, findConfig, nowIso, parseConfig, renderConfigYaml, summarizeGaps } from '../core/index.js'
 import { draftForInit, openProject } from '../app/project.js'
@@ -38,6 +39,17 @@ class HttpError extends Error {
 const need = (v, name) => {
   if (typeof v !== 'string' || v.trim() === '') throw new HttpError(400, `缺少参数 ${name}`)
   return v.trim()
+}
+
+const GIT_URL = /^(https?|git|ssh):\/\/[^\s]+$|^[\w.-]+@[\w.-]+:.+$/
+/** 受限执行 git：只允许只读查询与克隆，用参数数组避免命令注入。 */
+function runGit(args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { windowsHide: true, timeout: 300_000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) reject(Object.assign(new Error(`${error.message}${stderr ? '：' + String(stderr).trim().slice(0, 500) : ''}`), { stdout, stderr }))
+      else resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
+    })
+  })
 }
 
 /** 只改动 refactorkit.yaml 中给定的顶层键，保留注释与其他内容。 */
@@ -136,6 +148,43 @@ export function createApi(services = {}) {
         hasConfig: await exists(join(path, CONFIG_FILE)),
         isGit: await exists(join(path, '.git')),
       }
+    },
+
+    'GET /git/repo': async (q) => {
+      const url = need(q.get('url'), 'url')
+      if (!GIT_URL.test(url)) throw new HttpError(400, '仓库地址格式不对（支持 http(s)/git/ssh）')
+      const r = await runGit(['ls-remote', '--symref', url, 'HEAD'])
+      const m = /ref:\s+refs\/heads\/(\S+)/.exec(r.stdout)
+      const defaultBranch = m ? m[1] : 'main'
+      const repoName = (() => {
+        const u = url.replace(/\.git$/, '').replace(/\/+$/, '')
+        const tail = u.slice(u.lastIndexOf('/') + 1)
+        return tail || 'repo'
+      })()
+      return { ok: true, repoName, defaultBranch }
+    },
+
+    'POST /git/clone': async (_q, body) => {
+      const url = need(body.url, 'url')
+      if (!GIT_URL.test(url)) throw new HttpError(400, '仓库地址格式不对（支持 http(s)/git/ssh）')
+      const destParent = resolve(need(body.destParent, 'destParent'))
+      const repoName = (need(body.repoName, 'repoName') || 'repo').replace(/[\\/:*?"<>|]/g, '').trim() || 'repo'
+      if (!(await exists(destParent))) throw new HttpError(400, `目标上级目录不存在：${destParent}`)
+      const target = join(destParent, repoName)
+      if (await exists(target)) throw new HttpError(409, `目标目录已存在：${target}`)
+      let detail
+      try {
+        const r = await runGit(['clone', '--progress', url, target])
+        detail = `${r.stderr || r.stdout}`.trim().split(/\r?\n/).slice(-8).join('\n')
+      } catch (error) {
+        throw new HttpError(400, `克隆失败：${error.message}`)
+      }
+      // 记录决策日志：克隆是导入动作，便于在"过程"里看到来源
+      try {
+        const opened = await openProject(destParent)
+        if (opened.project) await opened.project.addUsage('git-import', { url, target })
+      } catch { /* destParent 尚未初始化，忽略 */ }
+      return { ok: true, target, log: detail }
     },
 
     'POST /fs/mkdir': async (_q, body) => {

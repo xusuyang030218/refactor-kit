@@ -48,6 +48,8 @@ window.__ModuleLoader__.load({
       bind: (payload) => call('POST', '/bind', payload),
       activity: (root, task) => call('GET', '/activity', { root, task: task || undefined }),
       evidence: (root, id) => call('GET', '/evidence', { root, id }),
+      gitRepo: (url) => call('GET', '/git/repo', { url }),
+      gitClone: (payload) => call('POST', '/git/clone', payload),
     }
 
     // ───────────── 样式（主题令牌） ─────────────
@@ -374,6 +376,7 @@ window.__ModuleLoader__.load({
       const [c, setC] = useState(() => JSON.parse(JSON.stringify(initial)))
       const [busy, setBusy] = useState(false)
       const [err, setErr] = useState('')
+      const [advanced, setAdvanced] = useState(false)
       const set = (path, value) => setC((prev) => {
         const next = JSON.parse(JSON.stringify(prev))
         let o = next
@@ -408,6 +411,8 @@ window.__ModuleLoader__.load({
           h(Field, { label: '老系统仓库（只读）', hint: '插件会拦截对它的任何写入' }, h('input', { className: 'rk-in', value: (c.project && c.project.legacyRoot) || '', onChange: (e) => set(['project', 'legacyRoot'], e.target.value) })),
           h(Field, { label: '允许写入的目录（每行一个 glob）', hint: '范围外的写入会被拦截' }, h('textarea', { className: 'rk-ta', style: { minHeight: 70 }, value: lines(c.project && c.project.writeScope), onChange: (e) => set(['project', 'writeScope'], unlines(e.target.value)) })),
           h(Field, { label: '记忆文件（每行一个，可空）', hint: '项目索引、词汇表等，会话开始时注入摘要' }, h('textarea', { className: 'rk-ta', style: { minHeight: 50 }, value: lines(c.project && c.project.memoryFiles), onChange: (e) => set(['project', 'memoryFiles'], unlines(e.target.value)) }))),
+        h('button', { type: 'button', className: 'rk-link', style: { marginBottom: 8 }, onClick: () => setAdvanced(!advanced) }, advanced ? '▲ 收起高级设置' : '▾ 高级设置（模型、门禁、审核密度，可选）'),
+        advanced ? h(React.Fragment, null,
         h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '模型槽'),
           h('p', { className: 'rk-hint', style: { marginTop: 2 } }, '模型槽用于指定分身/审查用哪家模型。留空或选「— provider —」= 沿用当前会话正在用的模型，一般不需要改。'),
           catalog.length === 0 ? h('p', { className: 'rk-hint' }, '未读到 DSH 的模型目录，可以直接填写 provider 与模型 id。') : null,
@@ -444,6 +449,7 @@ window.__ModuleLoader__.load({
             h('button', { className: 'rk-btn', onClick: () => set(['commandAllowlist'], Array.from(new Set((c.commandAllowlist || []).concat(gates.map(([, g]) => g.command).filter(Boolean))))) }, '把门禁命令加入白名单'))),
         h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '命令白名单'),
           h(Field, { label: '门禁与断言只能执行这些前缀（每行一个）' }, h('textarea', { className: 'rk-ta', style: { minHeight: 80 }, value: lines(c.commandAllowlist), onChange: (e) => set(['commandAllowlist'], unlines(e.target.value)) }))),
+        ) : null,
         h('div', { className: 'rk-row' },
           h('button', { className: 'rk-btn primary', disabled: busy, onClick: save }, busy ? '保存中…' : saveLabel)),
         err ? h('p', { className: 'rk-err' }, err) : null)
@@ -632,6 +638,11 @@ window.__ModuleLoader__.load({
     function InitView({ cwd, sessionId, catalog, notify, onDone, onCancel }) {
       const [targetRoot, setTarget] = useState(cwd || '')
       const [legacyRoot, setLegacy] = useState('')
+      const [srcKind, setSrcKind] = useState('local')
+      const [gitUrl, setGitUrl] = useState('')
+      const [cloneDir, setCloneDir] = useState('')
+      const [repoName, setRepoName] = useState('')
+      const [cloning, setCloning] = useState(false)
       const [name, setName] = useState('')
       const [draft, setDraft] = useState(null)
       const [busy, setBusy] = useState(false)
@@ -640,12 +651,36 @@ window.__ModuleLoader__.load({
         setBusy(true); setErr('')
         try { setDraft(await api.detect({ targetRoot, legacyRoot, name })) } catch (e) { setErr(e.message) } finally { setBusy(false) }
       }
+      const probe = async (url) => {
+        try { const r = await api.gitRepo(url); setRepoName(r.repoName); return r } catch (e) { setErr(e.message); return null }
+      }
+      const clone = async () => {
+        setCloning(true); setErr('')
+        try {
+          const parent = cloneDir || cwd
+          const r = await api.gitClone({ url: gitUrl, destParent: parent, repoName })
+          setLegacy(r.target)
+          if (!targetRoot) setTarget(r.target + (process.platform === 'win32' ? '\\重构后' : '/重构后'))
+          notify('已克隆：' + r.target)
+          setSrcKind('local')
+        } catch (e) { setErr(e.message) } finally { setCloning(false) }
+      }
       const differs = cwd && targetRoot && cwd.replace(/[\\/]+$/, '').toLowerCase() !== targetRoot.replace(/[\\/]+$/, '').toLowerCase()
       return h('div', null,
         h('div', { className: 'rk-card' },
           h('div', { className: 'rk-row' }, h('div', { className: 'rk-h rk-grow' }, '新建重构项目'), onCancel ? h('button', { className: 'rk-btn', onClick: onCancel }, '返回') : null),
-          h('p', { className: 'rk-muted' }, '选好两个目录后点"探测"，插件识别技术栈并生成配置草稿；在下面的表单检查后保存即完成初始化（等同 CP0 审核通过）。'),
-          h(PathField, { label: '① 要重构的目录', desc: '老系统源码所在目录。插件只读取它，并拦截任何写入。', value: legacyRoot, onChange: setLegacy, pickerTitle: '选择要重构的目录（老系统）', mode: 'legacy', cwd }),
+          h('p', { className: 'rk-muted' }, '选好来源与存放目录后点"探测"，插件识别技术栈并生成配置草稿；在下面的表单检查后保存即完成初始化（等同 CP0 审核通过）。'),
+          h('div', { className: 'rk-row', style: { marginBottom: 6 } },
+            h('button', { type: 'button', className: 'rk-btn' + (srcKind === 'local' ? ' primary' : ''), onClick: () => setSrcKind('local') }, '本地目录'),
+            h('button', { type: 'button', className: 'rk-btn' + (srcKind === 'git' ? ' primary' : ''), onClick: () => setSrcKind('git') }, 'Git 仓库')),
+          srcKind === 'git'
+            ? h('div', { className: 'rk-pathfield' },
+                h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, '① 要重构的来源（Git 仓库）'), h('span', { className: 'rk-pill info' }, '克隆后只读')),
+                h(Field, { label: '仓库地址' }, h('input', { className: 'rk-in rk-mono', value: gitUrl, spellCheck: false, placeholder: 'https://github.com/org/repo.git', onChange: (e) => { setGitUrl(e.target.value); setRepoName('') }, onBlur: () => gitUrl.trim() && !repoName && probe(gitUrl.trim()) })),
+                h(Field, { label: '保存到（可选，默认当前会话目录）', hint: repoName ? '克隆为文件夹：' + repoName : '' }, h('input', { className: 'rk-in rk-mono', value: cloneDir, spellCheck: false, placeholder: cwd || '选择或输入目录', onChange: (e) => setCloneDir(e.target.value) })),
+                h('div', { className: 'rk-row', style: { marginTop: 8 } },
+                  h('button', { className: 'rk-btn primary', disabled: cloning || !gitUrl.trim(), onClick: clone }, cloning ? '克隆中…' : '克隆并作为要重构的目录')))
+            : h(PathField, { label: '① 要重构的目录', desc: '老系统源码所在目录。插件只读取它，并拦截任何写入。', value: legacyRoot, onChange: setLegacy, pickerTitle: '选择要重构的目录（老系统）', mode: 'legacy', cwd }),
           h('div', { className: 'rk-arrow' }, '↓ 重构到'),
           h(PathField, { label: '② 重构后存放的目录', desc: '新系统代码写到这里。可选已有仓库，也可以在浏览时「新建文件夹」；refactorkit.yaml 与过程记录 .refactorkit/ 也放在这里。', value: targetRoot, onChange: setTarget, pickerTitle: '选择重构后存放的目录（新系统）', mode: 'target', cwd }),
           differs ? h('p', { className: 'rk-hint', style: { color: 'var(--dsw-alias-state-warn-primary)' } }, '提示：当前会话的工作目录是 ' + cwd + '。DSH 默认只允许会话写入自己的工作目录，建议在 DSH 中新建会话并把工作目录设为存放目录，或给本会话"完全访问"权限。') : null,

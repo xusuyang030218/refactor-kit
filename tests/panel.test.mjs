@@ -161,6 +161,13 @@ describe('目录选择、项目绑定与重构过程', () => {
     assert.ok(r.body.places.some((p) => /盘$|根目录/.test(p.label)))
   })
 
+  test('git 导入：地址格式校验（不触发网络）', async () => {
+    assert.equal((await api.handle('GET', '/git/repo', q({ url: 'not a url' }))).status, 400)
+    assert.equal((await api.handle('POST', '/git/clone', q(), { url: 'javascript:alert(1)', destParent: tmp, repoName: 'x' })).status, 400)
+    assert.equal((await api.handle('POST', '/git/clone', q(), { url: 'https://github.com/a/b.git', destParent: join(tmp, 'nope'), repoName: 'x' })).status, 400, '目标上级目录不存在')
+    assert.equal((await api.handle('POST', '/git/clone', q(), { url: 'https://github.com/a/b.git', destParent: tmp, repoName: 'a/b' })).status, 400, '仓库名含非法字符')
+  })
+
   test('fs/pick：无系统选择器时 supported=false', async () => {
     assert.deepEqual((await api.handle('POST', '/fs/pick', q(), {})).body, { supported: false })
   })
@@ -342,7 +349,9 @@ describe('浏览器端', () => {
       commandAllowlist: ['mvn -q'],
     }
     const form = render(T.ConfigForm, { initial: config, catalog, onSave: noop, saveLabel: '保存配置' })
-    for (const s of ['模型槽', '异源审查候选', '门禁', '命令白名单', 'mvn -q test', 'gpt/gpt-5.*: free', '保存配置']) assert.ok(form.includes(s), `配置表单缺少：${s}`)
+    // 高级设置（模型槽/门禁/审核等）默认折叠；基础项始终显示
+    for (const s of ['项目名称', '老系统仓库', '允许写入的目录', '高级设置', '保存配置']) assert.ok(form.includes(s), `配置表单缺少：${s}`)
+    assert.ok(!form.includes('模型槽'), '高级设置默认折叠，不应直接渲染模型槽')
     const item = { id: 'x', header: 'CP2 任务契约', question: '契约是否认可？', detail: '| # | 断言 |\n|---|---|\n| A1 | **单测** |', file: '.refactorkit/review/T-01/CP2-contract.md', options: [{ label: '通过' }], editable: { block: 'contract', text: '- id: A1\n' } }
     const card = render(T.ReviewCard, { item, onDone: noop, notify: noop })
     for (const s of ['CP2 任务契约', '<table', '<b>单测</b>', 'rk-contract', '提意见退回', '驳回']) assert.ok(card.includes(s), `审核卡缺少：${s}`)
