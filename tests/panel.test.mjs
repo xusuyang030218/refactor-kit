@@ -196,6 +196,23 @@ describe('目录选择、项目绑定与重构过程', () => {
     assert.equal((await api.handle('POST', '/bind', q(), { session: 'sess-2', path: legacy })).status, 404, '老仓没有配置，不能打开')
   })
 
+  test('技术选型：tech-add / tech-del / state 返回；report 看板含技术选型', async () => {
+    let st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.deepEqual(st.tech, [], '初始无技术选型')
+    assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-add', args: { area: 'Spring Boot 版本', decision: '升级到 3.x', rationale: 'javax→jakarta' } })).status, 200)
+    st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.equal(st.tech.length, 1)
+    assert.equal(st.tech[0].area, 'Spring Boot 版本')
+    assert.equal(st.tech[0].by, 'user')
+    const { project } = await openProject(target)
+    const rep = await project.writeReport()
+    assert.match(await readFile(rep, 'utf8'), /技术选型/)
+    assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-del', args: { id: st.tech[0].id } })).status, 200)
+    st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.equal(st.tech.length, 0)
+    assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-add', args: { area: '' } })).status, 400, '维度必填')
+  })
+
   test('activity：决策日志翻译为时间线，可按任务过滤；evidence 可查看原文', async () => {
     const { project } = await openProject(target)
     await project.ledger.journal({ kind: 'task-open', taskId: 'T-01', detail: { title: '导出', gapIds: ['G-A'], risk: 'L2' } })
@@ -377,6 +394,8 @@ describe('浏览器端', () => {
     const chooser = render(T.ProjectChooser, { ctxInfo: { cwd: 'D:/t', bound: true, recent: [{ configFile: 'D:/o/refactorkit.yaml', name: 'DTS', root: 'D:/o', legacyRoot: 'D:/l' }] }, sessionId: 's', notify: noop, onDone: noop, onNew: noop })
     for (const s of ['新建项目…', '打开已有项目', '最近的项目', 'DTS', '解除绑定']) assert.ok(chooser.includes(s), `项目选择缺少：${s}`)
     assert.ok(render(T.ActivityView, props).includes('全部过程'))
+    const overview = render(T.OverviewView, props)
+    for (const s of ['重构路线', '盘点', '技术选型', '实施', '验证', '收尾', '从这开始']) assert.ok(overview.includes(s), `概览缺少：${s}`)
     const legacyDlg = render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', mode: 'legacy', onPick: noop, onClose: noop })
     for (const s of ['此电脑', '系统对话框…', '取消', '显示隐藏']) assert.ok(legacyDlg.includes(s), `目录对话框缺少：${s}`)
     assert.ok(!legacyDlg.includes('新建文件夹'), '要重构的目录（只读）不提供新建文件夹')

@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import YAML from 'yaml'
 import {
-  CONFIG_FILE, Ledger, STATE_DIR, cardCP0, cardCP1, computeStatus, exists, findConfig, parseConfig,
+  CONFIG_FILE, Ledger, STATE_DIR, cardCP0, cardCP1, computeStatus, exists, findConfig, nowIso, parseConfig,
   readYamlBlock, renderConfigYaml, summarizeGaps,
 } from '../core/index.js'
 import { draftForInit, openProject } from '../app/project.js'
@@ -227,9 +227,9 @@ export function registerProjectTools(ctx, defineTool) {
   // ───────────── rk_note ─────────────
   ctx.tools.register(defineTool({
     name: 'rk_note',
-    description: '[RefactorKit] 写入项目记忆：踩过的坑、做过的决策、确认的事实。下次 rk_status / 任务打开时会带出摘要。',
+    description: '[RefactorKit] 写入项目记忆：踩过的坑、做过的决策、确认的事实。kind=tech 记录技术选型（如"Spring Boot 版本: 升级到 3.x，javax→jakarta"），会在面板"技术选型"里展示。下次 rk_status / 任务打开时会带出摘要。',
     parameters: {
-      kind: { type: 'string', enum: ['pitfall', 'decision', 'fact'], required: true },
+      kind: { type: 'string', enum: ['pitfall', 'decision', 'fact', 'tech'], required: true },
       text: { type: 'string', required: true },
     },
     output: RK_OUTPUT,
@@ -237,6 +237,14 @@ export function registerProjectTools(ctx, defineTool) {
       const p = await requireProject(exec)
       await p.ledger.appendMemory(args.kind, args.text)
       await p.ledger.journal({ kind: 'note', detail: { kind: args.kind } })
+      if (args.kind === 'tech') {
+        // "维度: 决策（理由）" → area / decision；无冒号则整句作为决策、维度留"技术选型"
+        const m = /^([^:：]{1,40})[:：]\s*(.+)$/.exec(args.text.trim())
+        await p.ledger.updateTech((doc) => {
+          doc.decisions.push({ id: `td-${Date.now()}`, area: m ? m[1].trim() : '技术选型', decision: m ? m[2].trim() : args.text.trim(), by: 'model', at: nowIso() })
+        })
+        return { text: `已记录技术选型。`, data: {} }
+      }
       return { text: `已记录（${args.kind}）。`, data: {} }
     },
   }))

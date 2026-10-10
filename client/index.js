@@ -99,6 +99,17 @@ window.__ModuleLoader__.load({
 .rk-toast{position:sticky;bottom:0;margin-top:8px;padding:6px 10px;border-radius:6px;background:var(--dsw-alias-toast-bg);color:var(--dsw-alias-toast-label);font-size:12px}
 .rk-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .rk-sep{height:1px;background:var(--dsw-alias-border-l1);margin:12px 0}
+.rk-steps{display:flex;gap:4px;overflow-x:auto;padding:2px 0 4px}
+.rk-step{flex:1;min-width:64px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 8px;text-align:center;background:var(--dsw-alias-bg-layer-1)}
+.rk-step .n{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.rk-step .t{font-size:12px;font-weight:600;margin-top:1px}
+.rk-step .h{font-size:11px;color:var(--dsw-alias-label-tertiary);margin-top:2px}
+.rk-step.done{border-color:var(--dsw-alias-state-success-primary)}.rk-step.done .t{color:var(--dsw-alias-state-success-primary)}
+.rk-step.act{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary) inset}
+.rk-step.act .t{color:var(--dsw-alias-state-business-primary)}
+.rk-step.skip{opacity:.55}
+.rk-tech{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 8px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-1)}
+.rk-tech .a{font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .rk-proj{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin-top:6px}
 .rk-proj>span:nth-child(odd){color:var(--dsw-alias-label-tertiary)}
 .rk-path{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -244,6 +255,63 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────── 概览 ─────────────
+    function Roadmap({ state }) {
+      const tech = state.tech || []
+      const tasks = state.tasks || []
+      const g = state.gapSummary
+      const anyPass = tasks.some((t) => t.results && Object.values(t.results).some((r) => r && r.verdict === 'pass'))
+      const anyDone = tasks.some((t) => t.status === 'DONE')
+      const allClear = g && g.missing === 0 && g.partial === 0 && (tasks.length === 0 || tasks.every((t) => t.status === 'DONE' || t.status === 'ABANDONED'))
+      const started = tasks.length > 0 || (g && g.covered > 0)
+      const stages = [
+        { key: 'survey', n: 1, t: '盘点', done: !!state.survey, skip: false, h: '扫描新旧仓库，算出缺口' },
+        { key: 'tech', n: 2, t: '技术选型', done: tech.length > 0, skip: tech.length === 0 && started, h: '框架/版本/数据迁移方案' },
+        { key: 'impl', n: 3, t: '实施', done: anyDone, skip: false, h: '按缺口分任务迁移' },
+        { key: 'verify', n: 4, t: '验证', done: anyPass, skip: false, h: '门禁取证' },
+        { key: 'finish', n: 5, t: '收尾', done: allClear, skip: false, h: '缺口清零/裁撤，验收' },
+      ]
+      const firstActive = stages.find((s) => !s.done && !s.skip)
+      return h('div', { className: 'rk-steps' }, stages.map((s) => {
+        const active = firstActive && firstActive.key === s.key
+        return h('div', { key: s.key, className: 'rk-step' + (s.done ? ' done' : active ? ' act' : s.skip ? ' skip' : '') },
+          h('div', { className: 'n' }, '第 ' + s.n + ' 步'),
+          h('div', { className: 't' }, (s.done ? '✓ ' : active ? '▶ ' : '') + s.t),
+          h('div', { className: 'h' }, active ? '从这开始：' + s.h : s.h))
+      }))
+    }
+
+    function TechView({ state, root, refresh, notify }) {
+      const [open, setOpen] = useState(false)
+      const [area, setArea] = useState('')
+      const [decision, setDecision] = useState('')
+      const [rationale, setRationale] = useState('')
+      const tech = state.tech || []
+      const add = async () => {
+        try {
+          await api.action(root, 'tech-add', { area: area.trim(), decision: decision.trim(), rationale: rationale.trim() })
+          notify('技术选型已记录'); setOpen(false); setArea(''); setDecision(''); setRationale(''); refresh()
+        } catch (e) { notify(e.message, true) }
+      }
+      const del = async (id) => {
+        try { await api.action(root, 'tech-del', { id }); notify('已删除'); refresh() } catch (e) { notify(e.message, true) }
+      }
+      return h('div', { className: 'rk-sec' },
+        h('div', { className: 'rk-row' }, h('div', { className: 'rk-h rk-grow', style: { margin: 0 } }, '技术选型'), h('button', { className: 'rk-btn', onClick: () => setOpen(!open) }, open ? '收起' : '＋ 记录')),
+        h('p', { className: 'rk-hint', style: { margin: '2px 0 8px' } }, '重构用了什么技术方案，统一记在这里。模型也会在对话里用 rk_note(kind=tech) 记录。'),
+        tech.length === 0 ? h('p', { className: 'rk-muted' }, '还没有记录。开始重构前，建议先明确：目标框架与版本、数据层方案、迁移策略。') : null,
+        tech.map((d) => h('div', { key: d.id, className: 'rk-tech' },
+          h('div', { className: 'a' }, d.area + (d.by === 'model' ? '（模型记录）' : '（你记录）')),
+          h('div', { className: 'rk-row' }, h('span', { className: 'rk-grow' }, d.decision), h('button', { className: 'rk-btn danger', onClick: () => del(d.id) }, '删')),
+          d.rationale ? h('div', { className: 'rk-hint' }, d.rationale) : null)),
+        open ? h('div', { className: 'rk-card' },
+          h(Field, { label: '维度' }, h('input', { className: 'rk-in', value: area, onChange: (e) => setArea(e.target.value), placeholder: '如：Spring Boot 版本 / 数据层 / 前端框架' })),
+          h(Field, { label: '决策' }, h('input', { className: 'rk-in', value: decision, onChange: (e) => setDecision(e.target.value), placeholder: '如：升级到 Spring Boot 3.x' })),
+          h(Field, { label: '理由（可选）' }, h('input', { className: 'rk-in', value: rationale, onChange: (e) => setRationale(e.target.value), placeholder: '如：javax→jakarta，官方已停止 2.x 维护' })),
+          h('div', { className: 'rk-row', style: { marginTop: 8 } },
+            h('button', { className: 'rk-btn primary', disabled: !area.trim() || !decision.trim(), onClick: add }, '保存'),
+            h('button', { className: 'rk-btn', onClick: () => setOpen(false) }, '取消'))) : null)
+    }
+
     function OverviewView({ state, root, refresh, notify }) {
       const [busy, setBusy] = useState('')
       const run = async (op, label) => {
@@ -254,12 +322,14 @@ window.__ModuleLoader__.load({
       const g = state.gapSummary
       const kpi = (v, l) => h('div', { className: 'rk-kpi', key: l }, h('b', null, v), h('span', null, l))
       return h('div', null,
+        h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '重构路线'), h(Roadmap, { state })),
         h('div', { className: 'rk-sec' },
           h('div', { className: 'rk-row' }, h('span', { className: 'rk-grow' }, '状态：', h(Pill, { v: s.state || '-' })), h('span', { className: 'rk-muted' }, '审核预设 ' + state.preset)),
           h('div', { className: 'rk-row', style: { marginTop: 8 } },
             h('button', { className: 'rk-btn', disabled: !!busy, onClick: () => run('survey', '盘点') }, busy === 'survey' ? '盘点中…' : '盘点新旧仓库'),
             h('button', { className: 'rk-btn', disabled: !!busy || !state.survey, onClick: () => run('gaps', '刷新缺口') }, busy === 'gaps' ? '计算中…' : '刷新缺口'),
             h('button', { className: 'rk-btn', disabled: !!busy, onClick: () => run('report', '看板') }, '生成看板'))),
+        h(TechView, { state, root, refresh, notify }),
         g ? h('div', { className: 'rk-sec' }, h('div', { className: 'rk-kpis' },
           kpi(g.total, '缺口'), kpi(g.missing, '缺失'), kpi(g.partial, '部分'), kpi(g.covered, '已覆盖'), kpi(g.retired, '已裁撤'), kpi(pct(g.endpointCoverage), '端点覆盖（估算）'),
           state.survey ? kpi(pct(state.survey.weighted), '文件数加权') : null)) : null,

@@ -266,8 +266,8 @@ export function createApi(services = {}) {
 
     'GET /state': async (q) => {
       const p = await requireOpen(q.get('root'))
-      const [status, gapsDoc, tasksDoc, facts, memory] = await Promise.all([
-        p.status(), p.ledger.readGaps(), p.ledger.readTasks(), p.ledger.readFacts(), p.ledger.readMemory(),
+      const [status, gapsDoc, tasksDoc, facts, memory, techDoc] = await Promise.all([
+        p.status(), p.ledger.readGaps(), p.ledger.readTasks(), p.ledger.readFacts(), p.ledger.readMemory(), p.ledger.readTech(),
       ])
       const notes = []
       for (const [i, r] of (tasksDoc.projectReviews ?? []).entries()) {
@@ -290,6 +290,7 @@ export function createApi(services = {}) {
         notes,
         memory: memory.split('\n').filter(Boolean).slice(-20),
         preset: p.config.review.preset,
+        tech: techDoc.decisions ?? [],
       }
     },
 
@@ -445,6 +446,18 @@ export function createApi(services = {}) {
           const ids = args.ids ?? []
           await p.editGaps((gaps) => { for (const g of gaps) if (ids.includes(g.id)) g.note = String(args.text ?? '') })
           return { ok: true, message: '备注已保存' }
+        }
+        case 'tech-add': {
+          const area = need(args.area, 'area')
+          const decision = need(args.decision, 'decision')
+          await p.ledger.updateTech((doc) => {
+            doc.decisions.push({ id: `td-${Date.now()}`, area, decision, rationale: args.rationale ?? '', by: 'user', at: nowIso() })
+          })
+          return { ok: true, message: '技术选型已记录' }
+        }
+        case 'tech-del': {
+          await p.ledger.updateTech((doc) => { doc.decisions = doc.decisions.filter((d) => d.id !== args.id) })
+          return { ok: true, message: '已删除该条技术选型' }
         }
         case 'report': {
           const file = await p.writeReport()

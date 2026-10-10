@@ -70,6 +70,7 @@ ${kpi(s ? pct(s.endpointCoverage) : '-', '端点覆盖率')}${kpi(tasks.filter((
 <section class="wide"><h2>审核时间线</h2>${table(['时间', '对象', '审核点', '策略', '结论', '意见'], reviews.slice(0, 40).map((r) => [
     esc(String(r.askedAt).replace('T', ' ').slice(0, 16)), esc(r.taskId), esc(r.checkpoint), esc(r.policy), esc(r.outcome), esc(r.comment ?? ''),
   ]))}<p class="empty">阻塞审核累计等待 ${(waitMs / 60000).toFixed(1)} 分钟</p></section>
+<section><h2>技术选型</h2>${table(['维度', '决策', '理由', '来源'], (d.tech ?? []).map((t) => [esc(t.area), esc(t.decision), esc(t.rationale ?? ''), esc(t.by === 'model' ? '模型' : '用户')]))}</section>
 <section><h2>缺口（未覆盖，前 30）</h2>${table(['缺口', '端点', '覆盖', '状态'], (d.gapsDoc?.gaps ?? []).filter((g) => g.status === 'missing' || g.status === 'partial').sort((a, b) => b.endpoints - a.endpoints).slice(0, 30).map((g) => [esc(g.id), g.endpoints, pct(g.coverage), badge(g.status, statusKind[g.status])]))}</section>
 <section><h2>模型使用（分身）</h2>${table(['模型', '分身次数'], Object.entries(byModel).map(([k, n]) => [esc(k), n]))}<p class="empty">技能加载 ${journal.filter((j) => j.kind === 'skill-load').length} 次；不可逆操作 ${journal.filter((j) => j.kind === 'irreversible').length} 次</p></section>
 </main></body></html>

@@ -79,6 +79,21 @@ export class Ledger {
     } catch { return [] }
   }
 
+  /** 技术选型（rk_note kind=tech / 面板）。 */
+  async readTech() { return readJson(this.path('tech.json'), { revision: 0, decisions: [] }) }
+
+  /** 读-改-写 tech.json。fn 收到 decisions 数组，返回结果。 */
+  async updateTech(fn) {
+    return withLock(this.dir, async () => {
+      const doc = await this.readTech()
+      const result = await fn(doc)
+      doc.revision = (doc.revision ?? 0) + 1
+      doc.updatedAt = nowIso()
+      await atomicWriteJson(this.path('tech.json'), doc)
+      return result
+    })
+  }
+
   /** 项目记忆（rk_note）。 */
   async appendMemory(kind, text) {
     await appendLine(this.path('memory.md'), `- [${kind}] ${text.replace(/\r?\n/g, ' ')} _(${nowIso().slice(0, 10)})_`)

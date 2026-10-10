@@ -105,10 +105,10 @@ export class Project {
   }
 
   async writeReport() {
-    const [facts, gapsDoc, tasksDoc, journal] = await Promise.all([
-      this.ledger.readFacts(), this.ledger.readGaps(), this.ledger.readTasks(), this.ledger.readJournal(),
+    const [facts, gapsDoc, tasksDoc, journal, techDoc] = await Promise.all([
+      this.ledger.readFacts(), this.ledger.readGaps(), this.ledger.readTasks(), this.ledger.readJournal(), this.ledger.readTech(),
     ])
-    const html = buildReportHtml({ config: this.config, facts, gapsDoc, tasksDoc, journal, projectReviews: tasksDoc.projectReviews ?? [], generatedAt: nowIso() })
+    const html = buildReportHtml({ config: this.config, facts, gapsDoc, tasksDoc, journal, tech: techDoc.decisions ?? [], projectReviews: tasksDoc.projectReviews ?? [], generatedAt: nowIso() })
     const file = join(this.config.stateDir, 'report.html')
     await atomicWrite(file, html)
     return file
