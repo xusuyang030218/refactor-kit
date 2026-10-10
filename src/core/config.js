@@ -124,7 +124,8 @@ export function validateConfig(c) {
   if (!isObj(c.gates)) issues.push('gates 应为对象：门禁名 → { command, cwd?, expectExit?, expectPattern?, sideEffect? }')
   else {
     for (const [name, g] of Object.entries(c.gates)) {
-      if (!isObj(g) || typeof g.command !== 'string' || g.command.trim() === '') { issues.push(`gates.${name}.command 必填`); continue }
+      // 空门禁（command 为空或未填）静默忽略，不报错；代码项目才需要门禁
+      if (!isObj(g) || typeof g.command !== 'string' || g.command.trim() === '') continue
       if (g.expectPattern !== undefined) {
         try { new RegExp(g.expectPattern) } catch { issues.push(`gates.${name}.expectPattern 不是合法正则`) }
       }

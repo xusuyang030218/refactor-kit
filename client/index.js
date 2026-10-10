@@ -394,7 +394,12 @@ window.__ModuleLoader__.load({
       const byModel = Object.entries((c.autonomy && c.autonomy.byModel) || {}).map(([k, v]) => k + ': ' + v).join('\n')
       const save = async () => {
         setBusy(true); setErr('')
-        try { await onSave(c) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+        try {
+          const next = JSON.parse(JSON.stringify(c))
+          // 空门禁行（没填命令）直接丢弃，不再报错挡保存；代码项目才需要门禁
+          if (next.gates) next.gates = Object.fromEntries(Object.entries(next.gates).filter(([, g]) => g && g.command && g.command.trim()))
+          await onSave(next)
+        } catch (e) { setErr(e.message) } finally { setBusy(false) }
       }
       return h('div', null,
         extraTop || null,
@@ -404,6 +409,7 @@ window.__ModuleLoader__.load({
           h(Field, { label: '允许写入的目录（每行一个 glob）', hint: '范围外的写入会被拦截' }, h('textarea', { className: 'rk-ta', style: { minHeight: 70 }, value: lines(c.project && c.project.writeScope), onChange: (e) => set(['project', 'writeScope'], unlines(e.target.value)) })),
           h(Field, { label: '记忆文件（每行一个，可空）', hint: '项目索引、词汇表等，会话开始时注入摘要' }, h('textarea', { className: 'rk-ta', style: { minHeight: 50 }, value: lines(c.project && c.project.memoryFiles), onChange: (e) => set(['project', 'memoryFiles'], unlines(e.target.value)) }))),
         h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '模型槽'),
+          h('p', { className: 'rk-hint', style: { marginTop: 2 } }, '模型槽用于指定分身/审查用哪家模型。留空或选「— provider —」= 沿用当前会话正在用的模型，一般不需要改。'),
           catalog.length === 0 ? h('p', { className: 'rk-hint' }, '未读到 DSH 的模型目录，可以直接填写 provider 与模型 id。') : null,
           h(Field, { label: 'fast：读旧代码、摘要（便宜快速）' }, h(ModelPick, { value: slotOf('fast'), catalog, onChange: (v) => set(['slots', 'fast'], v) })),
           h(Field, { label: 'strong：架构决策（强推理）' }, h(ModelPick, { value: slotOf('strong'), catalog, onChange: (v) => set(['slots', 'strong'], v) })),
@@ -423,6 +429,7 @@ window.__ModuleLoader__.load({
           h(Field, { label: '按模型的自主度（每行 "provider/model模式: 档位"）', hint: '例：anthropic/claude-opus-*: free' },
             h('textarea', { className: 'rk-ta', style: { minHeight: 50 }, value: byModel, onChange: (e) => set(['autonomy', 'byModel'], Object.fromEntries(unlines(e.target.value).map((l) => { const i = l.lastIndexOf(':'); return [l.slice(0, i).trim().replace(/^"|"$/g, ''), l.slice(i + 1).trim()] }).filter(([k, v]) => k && v))) }))),
         h('div', { className: 'rk-sec' }, h('div', { className: 'rk-h' }, '门禁（契约断言可引用）'),
+          h('p', { className: 'rk-hint', style: { marginTop: 2 } }, '门禁是可选的检查命令（如 mvn test、pnpm build）。你的项目如果是提示词/文档等没有构建产物的迁移，可以全部留空或直接「删」，直接保存即可。'),
           h('table', { className: 'rk-tbl' },
             h('thead', null, h('tr', null, ['名称', '命令', '目录', '期望输出', '副作用', ''].map((x) => h('th', { key: x }, x)))),
             h('tbody', null, gates.map(([name, g]) => h('tr', { key: name },

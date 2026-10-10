@@ -246,6 +246,14 @@ describe('config + policy + blocks', () => {
     assert.ok(bad.some((i) => i.includes('commandAllowlist')))
     assert.ok(bad.some((i) => i.includes('requireEvidence')))
   })
+  test('空门禁（command 为空）不再报错：代码项目才需要门禁', () => {
+    const issues = core.validateConfig(core.deepMerge(core.DEFAULTS, {
+      project: { legacyRoot: 'D:/legacy', writeScope: ['docs/**'] },
+      gates: { gate1: { command: '' }, unit: { command: 'node -e "1"', cwd: '' } },
+      commandAllowlist: ['node -e'],
+    }))
+    assert.ok(!issues.some((i) => i.includes('command 必填')), '空门禁应被忽略，不产生 command 必填 报错')
+  })
   test('parseConfig 解析相对路径并合并默认值', () => {
     const file = join(tmp, 'proj', 'refactorkit.yaml')
     const c = core.parseConfig('project:\n  legacyRoot: ../legacy\n  writeScope: ["src/**"]\ngates:\n  unit: { command: "mvn -q test" }\ncommandAllowlist: ["mvn -q"]\n', file)

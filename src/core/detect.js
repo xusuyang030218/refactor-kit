@@ -102,9 +102,10 @@ export function draftConfig({ legacyRoot, name, detected, slots }) {
       writeScope: detected.writeScope,
       memoryFiles: detected.memoryFiles,
     },
+    // 模型槽留空 = 沿用当前会话模型；面板里用下拉选择真实 provider/模型。
     slots: slots ?? {
-      fast: { provider: '<填写 DSH 中的 provider 路由名>', model: '<模型 id>' },
-      reviewer: { candidates: [{ provider: '<与主会话不同的 provider>', model: '<模型 id>' }] },
+      fast: { provider: '', model: '' },
+      reviewer: { candidates: [{ provider: '', model: '' }] },
     },
     autonomy: { default: 'assisted', byModel: {} },
     review: { preset: 'standard' },
