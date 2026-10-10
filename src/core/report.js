@@ -38,6 +38,7 @@ export function buildReportHtml(d) {
   const css = `
   :root{color-scheme:light dark;--bg:#f7f7f8;--fg:#1f2328;--card:#fff;--line:#d0d7de;--mute:#6e7781}
   @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--card:#161b22;--line:#30363d;--mute:#8b949e}}
+  html,body{overscroll-behavior:contain}
   body{margin:0;font:14px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--fg)}
   header{padding:20px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:var(--mute)}
   main{padding:20px 28px;display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(420px,1fr))}

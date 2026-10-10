@@ -54,8 +54,12 @@ window.__ModuleLoader__.load({
 
     // ───────────── 样式（主题令牌） ─────────────
     const CSS = `
-.rk{position:relative;height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;background:var(--dsw-alias-bg-layer-1)}
+/* overscroll-behavior:contain 是关键：面板根是 overflow:hidden 的滚动容器，
+   不设它时，在头部/标签栏等非 .rk-body 区域滚动会把滚动链传给 DSH 的 tab 宿主，
+   带动外层（表现为"往下拉把会话区拉出来"）。所有滚动容器统一加 contain。 */
+.rk{position:relative;height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;overscroll-behavior:contain;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;background:var(--dsw-alias-bg-layer-1)}
 .rk *{box-sizing:border-box}
+.rk-head,.rk-tabs,.rk-steps,.rk-places,.rk-body,.rk-dirs,.rk-dlg-list,.rk-md pre,.rk-pre,.rk-reportwrap,.rk-report{overscroll-behavior:contain}
 .rk-head{padding:10px 14px 0;border-bottom:1px solid var(--dsw-alias-border-l2)}
 .rk-title{display:flex;align-items:baseline;gap:8px;font-weight:600;font-size:14px}
 .rk-sub{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
