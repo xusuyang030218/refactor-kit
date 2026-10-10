@@ -110,6 +110,8 @@ window.__ModuleLoader__.load({
 .rk-step.skip{opacity:.55}
 .rk-tech{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 8px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-1)}
 .rk-tech .a{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.rk-reportwrap{display:flex;flex-direction:column;height:100%;min-height:0}
+.rk-report{flex:1;min-height:420px;width:100%;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base)}
 .rk-proj{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin-top:6px}
 .rk-proj>span:nth-child(odd){color:var(--dsw-alias-label-tertiary)}
 .rk-path{font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -285,31 +287,70 @@ window.__ModuleLoader__.load({
       const [area, setArea] = useState('')
       const [decision, setDecision] = useState('')
       const [rationale, setRationale] = useState('')
+      const [askOpen, setAskOpen] = useState(false)
+      const [focus, setFocus] = useState('')
+      const [note, setNote] = useState('')
+      const [busy, setBusy] = useState('')
       const tech = state.tech || []
-      const add = async () => {
-        try {
-          await api.action(root, 'tech-add', { area: area.trim(), decision: decision.trim(), rationale: rationale.trim() })
-          notify('技术选型已记录'); setOpen(false); setArea(''); setDecision(''); setRationale(''); refresh()
-        } catch (e) { notify(e.message, true) }
-      }
-      const del = async (id) => {
-        try { await api.action(root, 'tech-del', { id }); notify('已删除'); refresh() } catch (e) { notify(e.message, true) }
+      const requests = state.techRequests || []
+      const proposals = state.techProposals || []
+      const pending = requests.filter((r) => r.status === 'pending')
+      const actor = (d) => ({ model: '（模型记录）', 'user-adopted': '（采纳建议）' }[d.by] ?? '（你记录）')
+      const run = async (op, args, okMsg) => {
+        setBusy(op)
+        try { const r = await api.action(root, op, args); notify(r.message || okMsg); setOpen(false); setAskOpen(false); refresh() } catch (e) { notify(e.message, true) } finally { setBusy('') }
       }
       return h('div', { className: 'rk-sec' },
-        h('div', { className: 'rk-row' }, h('div', { className: 'rk-h rk-grow', style: { margin: 0 } }, '技术选型'), h('button', { className: 'rk-btn', onClick: () => setOpen(!open) }, open ? '收起' : '＋ 记录')),
-        h('p', { className: 'rk-hint', style: { margin: '2px 0 8px' } }, '重构用了什么技术方案，统一记在这里。模型也会在对话里用 rk_note(kind=tech) 记录。'),
-        tech.length === 0 ? h('p', { className: 'rk-muted' }, '还没有记录。开始重构前，建议先明确：目标框架与版本、数据层方案、迁移策略。') : null,
+        h('div', { className: 'rk-row' }, h('div', { className: 'rk-h rk-grow', style: { margin: 0 } }, '技术选型'),
+          h('button', { className: 'rk-btn', onClick: () => { setAskOpen(!askOpen); setOpen(false) } }, '🧠 请模型给建议'),
+          h('button', { className: 'rk-btn', onClick: () => { setOpen(!open); setAskOpen(false) } }, open ? '收起' : '＋ 自己记录')),
+        h('p', { className: 'rk-hint', style: { margin: '2px 0 8px' } }, '让模型分析项目后给出方案（含理由、成本、风险），你在下面点「采纳」；也可以自己记录。'),
+        askOpen ? h('div', { className: 'rk-card' },
+          h(Field, { label: '想让它帮你判断什么' }, h('input', { className: 'rk-in', value: focus, onChange: (e) => setFocus(e.target.value), placeholder: '如：前端用 Vue3 还是保持 jQuery / 数据迁移怎么做' })),
+          h(Field, { label: '补充说明（可选）' }, h('input', { className: 'rk-in', value: note, onChange: (e) => setNote(e.target.value), placeholder: '如：必须兼容 IE11；团队只有 1 个人' })),
+          h('div', { className: 'rk-row', style: { marginTop: 8 } },
+            h('button', { className: 'rk-btn primary', disabled: busy || !focus.trim(), onClick: () => run('tech-ask', { focus: focus.trim(), note: note.trim() }, '已请求') }, busy === 'tech-ask' ? '提交中…' : '提交请求'),
+            h('button', { className: 'rk-btn', onClick: () => setAskOpen(false) }, '取消')),
+          h('p', { className: 'rk-hint' }, '提交后，请对模型说一句「处理技术选型请求」（或等它下一轮回复），它会派只读分身分析并在这里给出方案。')) : null,
+        pending.length ? h('div', { className: 'rk-tech' },
+          h('div', { className: 'a' }, '等待模型回答（' + pending.length + '）'),
+          pending.map((r) => h('div', { key: r.id, className: 'rk-row' }, h('span', { className: 'rk-grow' }, r.focus + (r.note ? '：' + r.note : '')), h('span', { className: 'rk-pill warn' }, '待处理')))) : null,
+        proposals.map((p) => h('div', { key: p.id, className: 'rk-card' },
+          h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, '建议：' + p.area), h('span', { className: 'rk-hint' }, p.by)),
+          (p.options || []).map((o) => h('div', { key: o.name, className: 'rk-tech' },
+            h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, o.name), p.recommend === o.name ? h('span', { className: 'rk-pill ok' }, '推荐') : null,
+              h('button', { className: 'rk-btn primary', disabled: !!busy, onClick: () => run('tech-adopt', { proposalId: p.id, optionName: o.name }, '已采纳') }, '采纳')),
+            h('div', { className: 'rk-hint' }, '理由：' + o.reason),
+            o.cost ? h('div', { className: 'rk-hint' }, '成本：' + o.cost) : null,
+            o.risk ? h('div', { className: 'rk-hint' }, '风险：' + o.risk) : null)),
+          p.why ? h('p', { className: 'rk-hint' }, '推荐 ' + p.recommend + '：' + p.why) : null,
+          h('button', { className: 'rk-btn', onClick: () => run('tech-dismiss', { proposalId: p.id }, '已忽略') }, '忽略这条建议'))),
+        tech.length === 0 && proposals.length === 0 && pending.length === 0 ? h('p', { className: 'rk-muted' }, '还没有记录。开始重构前，先明确：目标框架与版本、数据层方案、迁移策略。') : null,
         tech.map((d) => h('div', { key: d.id, className: 'rk-tech' },
-          h('div', { className: 'a' }, d.area + (d.by === 'model' ? '（模型记录）' : '（你记录）')),
-          h('div', { className: 'rk-row' }, h('span', { className: 'rk-grow' }, d.decision), h('button', { className: 'rk-btn danger', onClick: () => del(d.id) }, '删')),
+          h('div', { className: 'a' }, d.area + actor(d)),
+          h('div', { className: 'rk-row' }, h('span', { className: 'rk-grow' }, d.decision), h('button', { className: 'rk-btn danger', onClick: () => run('tech-del', { id: d.id }, '已删除') }, '删')),
           d.rationale ? h('div', { className: 'rk-hint' }, d.rationale) : null)),
         open ? h('div', { className: 'rk-card' },
           h(Field, { label: '维度' }, h('input', { className: 'rk-in', value: area, onChange: (e) => setArea(e.target.value), placeholder: '如：Spring Boot 版本 / 数据层 / 前端框架' })),
           h(Field, { label: '决策' }, h('input', { className: 'rk-in', value: decision, onChange: (e) => setDecision(e.target.value), placeholder: '如：升级到 Spring Boot 3.x' })),
-          h(Field, { label: '理由（可选）' }, h('input', { className: 'rk-in', value: rationale, onChange: (e) => setRationale(e.target.value), placeholder: '如：javax→jakarta，官方已停止 2.x 维护' })),
+          h(Field, { label: '理由（必填）', hint: '写下为什么这样选：依据、约束、被否掉的替代方案' }, h('input', { className: 'rk-in', value: rationale, onChange: (e) => setRationale(e.target.value), placeholder: '如：javax→jakarta，2.x 已停止维护' })),
           h('div', { className: 'rk-row', style: { marginTop: 8 } },
-            h('button', { className: 'rk-btn primary', disabled: !area.trim() || !decision.trim(), onClick: add }, '保存'),
+            h('button', { className: 'rk-btn primary', disabled: !area.trim() || !decision.trim() || !rationale.trim(), onClick: () => run('tech-add', { area: area.trim(), decision: decision.trim(), rationale: rationale.trim() }, '已记录') }, '保存'),
             h('button', { className: 'rk-btn', onClick: () => setOpen(false) }, '取消'))) : null)
+    }
+
+    /** 报告：直接把看板 HTML 内嵌在面板里，不用去文件系统找文件。 */
+    function ReportView({ root }) {
+      const [ver, setVer] = useState(0)
+      const [err, setErr] = useState('')
+      const src = API + '/report?root=' + encodeURIComponent(root) + '&_=' + ver
+      return h('div', { className: 'rk-reportwrap' },
+        h('div', { className: 'rk-row', style: { marginBottom: 6 } },
+          h('span', { className: 'rk-hint rk-grow' }, '完整看板（与 .refactorkit/report.html 同内容）'),
+          h('button', { className: 'rk-btn', onClick: () => setVer((v) => v + 1) }, '刷新'),
+          h('button', { className: 'rk-btn', onClick: () => { setErr(''); window.open(src, '_blank') } }, '新窗口打开')),
+        err ? h('p', { className: 'rk-err' }, err) : null,
+        h('iframe', { className: 'rk-report', src, title: 'RefactorKit 报告', onError: () => setErr('报告加载失败，可点「新窗口打开」') }))
     }
 
     function OverviewView({ state, root, refresh, notify }) {
@@ -869,7 +910,7 @@ window.__ModuleLoader__.load({
       const pendingCount = state ? (state.pending || []).length : 0
       const noteCount = state ? (state.notes || []).length : 0
       const active = tab || (pendingCount > 0 ? 'reviews' : 'overview')
-      const tabs = [['reviews', '待审核', pendingCount + noteCount], ['overview', '概览'], ['activity', '过程'], ['gaps', '缺口'], ['tasks', '任务'], ['config', '配置']]
+      const tabs = [['reviews', '待审核', pendingCount + noteCount], ['overview', '概览'], ['report', '报告'], ['activity', '过程'], ['gaps', '缺口'], ['tasks', '任务'], ['config', '配置']]
       const ready = ctxInfo && ctxInfo.initialized && !ctxInfo.error
       const cwd = ctxInfo && (ctxInfo.suggestedTarget || ctxInfo.cwd)
 
@@ -886,6 +927,7 @@ window.__ModuleLoader__.load({
       else {
         const props = { state, root, refresh, notify }
         body = active === 'reviews' ? h(ReviewsView, props)
+          : active === 'report' ? h(ReportView, { root })
           : active === 'activity' ? h(ActivityView, props)
           : active === 'gaps' ? h(GapsView, props)
           : active === 'tasks' ? h(TasksView, props)
@@ -980,7 +1022,7 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供测试：服务端渲染各视图
-    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, PathField, DockButton, Md, pickSystemDirectory, setClientCtx, crumbsOf }
+    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, ReportView, Roadmap, TechView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, PathField, DockButton, Md, pickSystemDirectory, setClientCtx, crumbsOf }
 
     module.exports = exports
     return module.exports

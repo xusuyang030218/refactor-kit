@@ -84,6 +84,32 @@ export async function runDelegate(ctx, exec, req) {
   }
 }
 
+/** 技术选型建议的结构化输出 schema（对象根，DSH 要求）。 */
+export const TECH_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['area', 'options', 'recommend', 'why'],
+  properties: {
+    area: { type: 'string' },
+    options: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'reason'],
+        properties: {
+          name: { type: 'string' },
+          reason: { type: 'string' },
+          cost: { type: 'string' },
+          risk: { type: 'string' },
+        },
+      },
+    },
+    recommend: { type: 'string' },
+    why: { type: 'string' },
+  },
+}
+
 /** 审查分身的结构化输出 schema（对象根，DSH 要求）。 */
 export const REVIEW_SCHEMA = {
   type: 'object',

@@ -115,9 +115,9 @@ before(async () => {
 after(async () => { await rm(tmp, { recursive: true, force: true }) })
 
 describe('插件注册', () => {
-  test('13 个工具全部通过真实 defineTool 的 schema 编译', () => {
+  test('14 个工具全部通过真实 defineTool 的 schema 编译', () => {
     assert.deepEqual([...tools.keys()].sort(), [
-      'rk_decide', 'rk_delegate', 'rk_gaps', 'rk_gate', 'rk_init', 'rk_note', 'rk_report', 'rk_review', 'rk_status', 'rk_survey', 'rk_task_close', 'rk_task_open', 'rk_truth',
+      'rk_decide', 'rk_delegate', 'rk_gaps', 'rk_gate', 'rk_init', 'rk_note', 'rk_report', 'rk_review', 'rk_status', 'rk_survey', 'rk_task_close', 'rk_task_open', 'rk_tech_advise', 'rk_truth',
     ])
     for (const def of tools.values()) {
       assert.equal(def.parameters.type, 'object')

@@ -213,6 +213,53 @@ describe('目录选择、项目绑定与重构过程', () => {
     assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-add', args: { area: '' } })).status, 400, '维度必填')
   })
 
+  test('技术选型咨询与采纳：tech-ask → 建议 → 采纳/忽略', async () => {
+    // 用户发起咨询
+    const ask = await api.handle('POST', '/action', q(), { root: target, op: 'tech-ask', args: { focus: '前端框架选哪个', note: '要兼容 IE11' } })
+    assert.equal(ask.status, 200)
+    let st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.equal(st.techRequests.length, 1)
+    assert.equal(st.techRequests[0].status, 'pending')
+    assert.equal(st.techRequests[0].focus, '前端框架选哪个')
+    // 模拟模型写回建议（rk_tech_advise 的落盘结果）
+    const { project } = await openProject(target)
+    await project.ledger.updateTech((doc) => {
+      doc.proposals.push({ id: 'tp-1', area: '前端框架', options: [
+        { name: 'Vue 3', reason: '生态成熟', cost: '中', risk: '需重写模板' },
+        { name: '保持 jQuery', reason: '改动最小', cost: '低', risk: '维护困难' },
+      ], recommend: 'Vue 3', why: '新系统已是 Vue 3', by: 'gpt/gpt-5.5', at: new Date().toISOString() })
+      for (const r of doc.requests) if (r.status === 'pending') r.status = 'answered'
+    })
+    st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.equal(st.techProposals.length, 1)
+    assert.equal(st.techProposals[0].recommend, 'Vue 3')
+    assert.equal(st.techRequests[0].status, 'answered')
+    // 采纳推荐方案 → 变成 decisions，建议出列
+    const adopt = await api.handle('POST', '/action', q(), { root: target, op: 'tech-adopt', args: { proposalId: 'tp-1', optionName: 'Vue 3' } })
+    assert.equal(adopt.status, 200)
+    st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.equal(st.techProposals.length, 0)
+    const adopted = st.tech.find((d) => d.decision === 'Vue 3')
+    assert.ok(adopted, '采纳后应写入技术选型')
+    assert.match(adopted.rationale, /生态成熟/)
+    assert.equal(adopted.by, 'user-adopted')
+    assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-adopt', args: { proposalId: 'nope' } })).status, 404)
+    // 忽略：重新放一条建议再忽略
+    await project.ledger.updateTech((doc) => { doc.proposals.push({ id: 'tp-2', area: 'x', options: [{ name: 'A', reason: 'r' }], recommend: 'A', why: 'w' }) })
+    assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-dismiss', args: { proposalId: 'tp-2' } })).status, 200)
+    st = (await api.handle('GET', '/state', q({ root: target }))).body
+    assert.equal(st.techProposals.length, 0)
+    assert.equal((await api.handle('POST', '/action', q(), { root: target, op: 'tech-ask', args: {} })).status, 400, '关注点必填')
+  })
+
+  test('report：返回看板 HTML 文本（面板内嵌用）', async () => {
+    const r = await api.handle('GET', '/report', q({ root: target }))
+    assert.equal(r.status, 200)
+    assert.match(r.body.html, /<!doctype html>/i)
+    assert.match(r.body.html, /RefactorKit 进度看板/)
+    assert.match(r.body.file, /report\.html$/)
+  })
+
   test('activity：决策日志翻译为时间线，可按任务过滤；evidence 可查看原文', async () => {
     const { project } = await openProject(target)
     await project.ledger.journal({ kind: 'task-open', taskId: 'T-01', detail: { title: '导出', gapIds: ['G-A'], risk: 'L2' } })
@@ -396,6 +443,13 @@ describe('浏览器端', () => {
     assert.ok(render(T.ActivityView, props).includes('全部过程'))
     const overview = render(T.OverviewView, props)
     for (const s of ['重构路线', '盘点', '技术选型', '实施', '验证', '收尾', '从这开始']) assert.ok(overview.includes(s), `概览缺少：${s}`)
+    for (const s of ['请模型给建议', '＋ 自己记录']) assert.ok(overview.includes(s), `技术选型区缺少：${s}`)
+    assert.ok(!overview.includes('理由（必填）'), '自己记录表单默认收起')
+    // 有待采纳建议时：显示方案、理由、成本、风险与采纳按钮
+    const withProposal = { ...state, techProposals: [{ id: 'tp-1', area: '前端框架', by: 'gpt/gpt-5.5', recommend: 'Vue 3', why: '新系统已是 Vue 3', options: [{ name: 'Vue 3', reason: '生态成熟', cost: '中', risk: '需重写模板' }, { name: 'jQuery', reason: '改动小' }] }], techRequests: [{ id: 'tr-1', focus: '前端框架选哪个', status: 'pending' }] }
+    const techHtml = render(T.OverviewView, { ...props, state: withProposal })
+    for (const s of ['建议：前端框架', 'Vue 3', '推荐', '采纳', '理由：生态成熟', '成本：中', '风险：需重写模板', '忽略这条建议', '等待模型回答']) assert.ok(techHtml.includes(s), `建议卡缺少：${s}`)
+    assert.ok(render(T.ReportView, { root: 'D:/t' }).includes('<iframe'), '报告页应内嵌 iframe')
     const legacyDlg = render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', mode: 'legacy', onPick: noop, onClose: noop })
     for (const s of ['此电脑', '系统对话框…', '取消', '显示隐藏']) assert.ok(legacyDlg.includes(s), `目录对话框缺少：${s}`)
     assert.ok(!legacyDlg.includes('新建文件夹'), '要重构的目录（只读）不提供新建文件夹')

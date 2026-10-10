@@ -4,7 +4,7 @@ import {
 } from '../core/index.js'
 import { describeReview, isApproved, runCheckpoint } from './checkpoint.js'
 import { REVIEW_SCHEMA, loadLens, runDelegate } from './delegate.js'
-import { RK_OUTPUT, RkError, modelOf, pct, refreshOpenTasks, requireProject } from './runtime.js'
+import { RK_OUTPUT, RkError, modelOf, pct, refreshOpenTasks, requireProject, resolveSlot } from './runtime.js'
 
 /** 按模型匹配自主度档位（设计第 6 节）。 */
 export function autonomyFor(config, model) {
@@ -47,14 +47,6 @@ const CONTRACT_PARAM = {
       },
     },
   },
-}
-
-function resolveSlot(config, slot) {
-  const s = config.slots?.[slot]
-  if (!s) throw new RkError(`未配置模型槽 ${slot}。refactorkit.yaml 的 slots 中已有：${Object.keys(config.slots ?? {}).join('、') || '无'}`, 'UNKNOWN_SLOT')
-  const pick = s.candidates ? s.candidates[0] : s
-  if (!pick?.provider || String(pick.provider).startsWith('<')) throw new RkError(`模型槽 ${slot} 还是占位符，请让用户在 refactorkit.yaml 中填写 provider / model。`, 'SLOT_PLACEHOLDER')
-  return pick
 }
 
 export function registerTaskTools(ctx, defineTool) {

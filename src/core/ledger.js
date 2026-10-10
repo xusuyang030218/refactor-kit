@@ -79,8 +79,11 @@ export class Ledger {
     } catch { return [] }
   }
 
-  /** 技术选型（rk_note kind=tech / 面板）。 */
-  async readTech() { return readJson(this.path('tech.json'), { revision: 0, decisions: [] }) }
+  /**
+   * 技术选型（rk_note kind=tech / 面板）。
+   * decisions 已采纳的选型；requests 用户发起的咨询；proposals 模型/分身给出的方案建议。
+   */
+  async readTech() { return readJson(this.path('tech.json'), { revision: 0, decisions: [], requests: [], proposals: [] }) }
 
   /** 读-改-写 tech.json。fn 收到 decisions 数组，返回结果。 */
   async updateTech(fn) {

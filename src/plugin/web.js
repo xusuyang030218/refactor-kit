@@ -291,7 +291,16 @@ export function createApi(services = {}) {
         memory: memory.split('\n').filter(Boolean).slice(-20),
         preset: p.config.review.preset,
         tech: techDoc.decisions ?? [],
+        techRequests: techDoc.requests ?? [],
+        techProposals: techDoc.proposals ?? [],
       }
+    },
+
+    // 报告：生成最新看板并返回 HTML 文本（面板内嵌显示，不必去文件系统找）
+    'GET /report': async (q) => {
+      const p = await requireOpen(q.get('root'))
+      const file = await p.writeReport()
+      return { file, html: await readFile(file, 'utf8') }
     },
 
     'GET /pending': async () => {
@@ -459,6 +468,34 @@ export function createApi(services = {}) {
           await p.ledger.updateTech((doc) => { doc.decisions = doc.decisions.filter((d) => d.id !== args.id) })
           return { ok: true, message: '已删除该条技术选型' }
         }
+        case 'tech-ask': {
+          // 用户请求模型给建议：写入待答复咨询，rk_status 会提示模型用 rk_tech_advise 处理
+          const focus = need(args.focus, 'focus')
+          await p.ledger.updateTech((doc) => {
+            doc.requests = [...(doc.requests ?? []), { id: `tr-${Date.now()}`, focus, note: args.note ?? '', status: 'pending', by: 'user', at: nowIso() }]
+          })
+          await p.ledger.journal({ kind: 'note', detail: { kind: 'tech-request', focus } })
+          return { ok: true, message: `已请求模型分析「${focus}」。对模型说一句"处理技术选型请求"或等它下一轮回复即可。` }
+        }
+        case 'tech-adopt': {
+          const proposal = (await p.ledger.readTech()).proposals?.find((x) => x.id === args.proposalId)
+          if (!proposal) throw new HttpError(404, '找不到该建议（可能已被删除）')
+          const opt = (proposal.options ?? []).find((o) => o.name === args.optionName) ?? (proposal.options ?? [])[0]
+          if (!opt) throw new HttpError(400, '该建议没有可采纳的方案')
+          await p.ledger.updateTech((doc) => {
+            doc.decisions.push({
+              id: `td-${Date.now()}`, area: proposal.area, decision: opt.name,
+              rationale: [opt.reason, proposal.recommend === opt.name && proposal.why ? `推荐理由：${proposal.why}` : ''].filter(Boolean).join('；'),
+              by: 'user-adopted', at: nowIso(),
+            })
+            doc.proposals = (doc.proposals ?? []).filter((x) => x.id !== proposal.id)
+          })
+          return { ok: true, message: `已采纳「${opt.name}」作为技术选型` }
+        }
+        case 'tech-dismiss': {
+          await p.ledger.updateTech((doc) => { doc.proposals = (doc.proposals ?? []).filter((x) => x.id !== args.proposalId) })
+          return { ok: true, message: '已忽略该建议' }
+        }
         case 'report': {
           const file = await p.writeReport()
           return { ok: true, message: `看板已生成：${file}`, file }
@@ -511,6 +548,14 @@ export function registerWeb(ctx) {
       if (!LOOPBACK.has(req.socket?.remoteAddress)) return send(403, { error: 'RefactorKit 面板接口只接受本机请求' })
       const url = new URL(req.url ?? '/', 'http://localhost')
       const path = url.pathname.slice(API_PREFIX.length) || '/'
+      // 报告以 HTML 直接返回，供面板内嵌展示
+      if (req.method === 'GET' && path === '/report') {
+        const r = await api.handle('GET', '/report', url.searchParams, undefined)
+        if (r.status !== 200) return send(r.status, r.body)
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(r.body.html)
+        return
+      }
       let body
       if (req.method === 'POST') {
         try { body = await readBody(req) } catch (error) { return send(error.status ?? 400, { error: error.message }) }

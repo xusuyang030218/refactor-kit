@@ -8,7 +8,8 @@ import {
 } from '../core/index.js'
 import { draftForInit, openProject } from '../app/project.js'
 import { describeReview, isApproved, runCheckpoint } from './checkpoint.js'
-import { RK_OUTPUT, RkError, cwdOf, pct, projectDirOf, requireProject } from './runtime.js'
+import { TECH_SCHEMA, loadLens, runDelegate } from './delegate.js'
+import { RK_OUTPUT, RkError, cwdOf, pct, projectDirOf, requireProject, resolveSlot } from './runtime.js'
 
 /** 修改 refactorkit.yaml 中的某个路径，保留注释与格式。 */
 async function updateConfigFile(file, path, value) {
@@ -48,7 +49,15 @@ export function registerProjectTools(ctx, defineTool) {
       }
       const p = await requireProject(exec)
       const s = await p.status()
-      return { text: statusText(s), data: s }
+      // 面板里用户点了"请模型给建议"时，在这里把请求交给模型处理
+      const tech = await p.ledger.readTech()
+      const asks = (tech.requests ?? []).filter((r) => r.status === 'pending')
+      if (asks.length === 0) return { text: statusText(s), data: s }
+      const lines = asks.map((r) => `- ${r.focus}${r.note ? `（补充：${r.note}）` : ''}`).join('\n')
+      return {
+        text: `${statusText(s)}\n\n【用户请求技术选型建议（${asks.length}）】\n${lines}\n→ 请调用 rk_tech_advise（focus 用上面的关注点）。它会派只读架构分身分析项目并给出方案（含理由/成本/风险/推荐），建议会出现在面板「技术选型」里由用户采纳。若信息不足以判断，用 rk_decide 先问用户。`,
+        data: { ...s, techRequests: asks },
+      }
     },
   }))
 
@@ -246,6 +255,69 @@ export function registerProjectTools(ctx, defineTool) {
         return { text: `已记录技术选型。`, data: {} }
       }
       return { text: `已记录（${args.kind}）。`, data: {} }
+    },
+  }))
+
+  // ───────────── rk_tech_advise：技术选型建议（只读架构分身） ─────────────
+  ctx.tools.register(defineTool({
+    name: 'rk_tech_advise',
+    description: '[RefactorKit] 技术选型建议：派一个只读的架构分身分析老/新系统的技术栈与缺口，给出 2-3 个方案（每个含理由、成本、风险）并明确推荐。结果写入面板"技术选型"，请用户采纳。用户点击面板"请模型给建议"后应调用本工具。',
+    parameters: {
+      focus: { type: 'string', description: '关注点，如"前端框架选哪个""数据层与迁移脚本方案"；省略则整体评估' },
+    },
+    output: RK_OUTPUT,
+    async execute(args, exec) {
+      const p = await requireProject(exec)
+      const [facts, gaps, tech] = await Promise.all([p.ledger.readFacts(), p.ledger.readGaps(), p.ledger.readTech()])
+      const focus = args.focus?.trim() || '整体技术选型'
+      const s = gaps.summary
+      const chosen = (tech.decisions ?? []).map((d) => `- ${d.area}：${d.decision}${d.rationale ? `（${d.rationale}）` : ''}`).join('\n') || '（无）'
+      const asks = (tech.requests ?? []).filter((r) => r.status === 'pending').map((r) => `- ${r.focus}${r.note ? `：${r.note}` : ''}`).join('\n')
+      const lens = await loadLens('architect', p.root)
+      const task = [
+        `你是老系统重构的架构师。请针对「${focus}」给出技术选型建议。只读分析，不要修改任何文件。`,
+        '',
+        `老系统目录（只读）：${p.config.project.legacyRoot}`,
+        `新系统目录：${p.config.project.targetRoot}`,
+        s ? `缺口概览：共 ${s.total}，缺失 ${s.missing}，部分 ${s.partial}，已覆盖 ${s.covered}；端点覆盖率（估算）${(Number(s.endpointCoverage ?? 0) * 100).toFixed(1)}%` : '尚未盘点缺口。',
+        facts ? `盘点：老仓控制器 ${facts.legacy?.metrics?.controller ?? '-'}，新仓控制器 ${facts.target?.metrics?.controller ?? '-'}` : '',
+        `已记录的技术选型：\n${chosen}`,
+        asks ? `用户/模型发起的待答复咨询：\n${asks}` : '',
+        '',
+        '工作方法：用只读工具查看两边的构建文件、依赖清单、目录结构与关键代码（例如 pom.xml / package.json / 配置文件 / 入口类），判断真实技术栈，不要凭猜测。',
+        '输出要求：',
+        '- area：这次建议覆盖的维度（如"前端框架""Spring Boot 版本""数据迁移"）。',
+        '- options：2-3 个可选方案；每个给出 name（方案名）、reason（为什么可行，要引用你在代码里看到的依据）、cost（迁移成本与工作量）、risk（风险与不适用场景）。',
+        '- recommend：你推荐哪个方案的 name（必须与某个 option 的 name 完全一致）。',
+        '- why：一句话说明为什么推荐它而不是其他方案。',
+        '若信息不足无法判断，options 给一个方案并在 reason 中写明需要用户补充什么信息。',
+      ].filter(Boolean).join('\n')
+      const route = resolveSlot(p.config, 'strong')
+      const res = await runDelegate(ctx, exec, {
+        label: 'rk:tech-advise', persona: lens.text, task,
+        provider: route.provider, model: route.model, reasoningEffort: route.reasoningEffort,
+        readOnly: true, outputSchema: TECH_SCHEMA,
+      })
+      await p.ledger.journal({ kind: 'delegate', detail: { lens: 'architect', provider: res.source.provider, model: res.source.model, readOnly: res.readOnly, why: `技术选型建议：${focus}`, verdict: res.structured?.recommend } })
+      const structured = res.structured
+      if (!structured) {
+        return { text: `架构分身没有返回结构化建议（${res.stopReason}）。原文：\n${res.text || '(空)'}`, data: { focus } }
+      }
+      const proposal = {
+        id: `tp-${Date.now()}`, area: structured.area || focus, focus,
+        options: structured.options ?? [], recommend: structured.recommend ?? '', why: structured.why ?? '',
+        by: res.source.provider ? `${res.source.provider}/${res.source.model}` : 'inherited',
+        at: nowIso(), readOnly: res.readOnly,
+      }
+      await p.ledger.updateTech((doc) => {
+        doc.proposals = [...(doc.proposals ?? []), proposal]
+        for (const r of doc.requests ?? []) if (r.status === 'pending') { r.status = 'answered'; r.answeredAt = nowIso() }
+      })
+      const list = proposal.options.map((o) => `- ${o.name}${o.name === proposal.recommend ? '（推荐）' : ''}：${o.reason}${o.cost ? `｜成本：${o.cost}` : ''}${o.risk ? `｜风险：${o.risk}` : ''}`).join('\n')
+      return {
+        text: `技术选型建议（${proposal.area}，来自 ${proposal.by}${res.readOnly ? '，只读' : ''}）：\n${list}\n推荐 ${proposal.recommend}：${proposal.why}\n\n已写入面板「技术选型」，等用户在面板采纳。若用户想改方案或补充信息，用 rk_decide 询问。`,
+        data: proposal,
+      }
     },
   }))
 
