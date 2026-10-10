@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
       action: (root, op, args) => call('POST', '/action', { root, op, args }),
       list: (path) => call('GET', '/fs/list', { path: path || '' }),
       pick: () => call('POST', '/fs/pick', {}),
+      mkdir: (path, name) => call('POST', '/fs/mkdir', { path, name }),
+      places: (cwd) => call('GET', '/fs/places', { cwd: cwd || undefined }),
       bind: (payload) => call('POST', '/bind', payload),
       activity: (root, task) => call('GET', '/activity', { root, task: task || undefined }),
       evidence: (root, id) => call('GET', '/evidence', { root, id }),
@@ -50,7 +52,7 @@ window.__ModuleLoader__.load({
 
     // ───────────── 样式（主题令牌） ─────────────
     const CSS = `
-.rk{height:100%;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;background:var(--dsw-alias-bg-layer-1)}
+.rk{position:relative;height:100%;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;background:var(--dsw-alias-bg-layer-1)}
 .rk *{box-sizing:border-box}
 .rk-head{padding:10px 14px 0;border-bottom:1px solid var(--dsw-alias-border-l2)}
 .rk-title{display:flex;align-items:baseline;gap:8px;font-weight:600;font-size:14px}
@@ -109,6 +111,28 @@ window.__ModuleLoader__.load({
 .rk-dot.human,.rk-dot.open{background:var(--dsw-alias-state-business-primary)}.rk-dot.agent,.rk-dot.skill{background:var(--dsw-alias-brand-primary)}
 .rk-pre{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Consolas,monospace;font-size:11px;max-height:320px;overflow:auto;background:var(--dsw-alias-markdown-code-block);padding:8px;border-radius:6px}
 .rk-link{border:0;background:none;padding:0;color:var(--dsw-alias-link);cursor:pointer;font:inherit;font-size:12px}
+.rk-modal{position:absolute;inset:0;z-index:20;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.45));display:flex;align-items:center;justify-content:center;padding:12px}
+.rk-dlg{width:100%;max-width:720px;max-height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l3);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.35);overflow:hidden}
+.rk-dlg-head{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:14px}
+.rk-x{border:0;background:transparent;color:var(--dsw-alias-label-secondary);font-size:18px;cursor:pointer;padding:0 4px;line-height:1}
+.rk-x:hover{color:var(--dsw-alias-label-primary)}
+.rk-dlg-bar{display:flex;gap:6px;align-items:center;padding:8px 12px 0}
+.rk-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;min-width:0;flex:1}
+.rk-crumb{border:0;background:transparent;color:var(--dsw-alias-label-primary);padding:2px 6px;border-radius:5px;cursor:pointer;font:inherit;font-size:12px}
+.rk-crumb:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.rk-places{display:flex;gap:6px;overflow-x:auto;padding:8px 12px 0}
+.rk-place{flex-shrink:0;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 10px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.rk-place:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.rk-dlg-list{flex:1;min-height:180px;overflow:auto;margin:8px 12px 0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
+.rk-dlg-list .rk-dir{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.rk-dir-ic{width:18px;text-align:center}
+.rk-newdir{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
+.rk-dlg-sel{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:12px;min-width:0}
+.rk-dlg-foot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l2);flex-wrap:wrap}
+.rk-pathfield{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;margin-top:10px;background:var(--dsw-alias-bg-layer-1)}
+.rk-pathfield .rk-pill{margin-left:4px}
+.rk-mono{font-family:ui-monospace,Consolas,monospace}
+.rk-arrow{text-align:center;color:var(--dsw-alias-label-tertiary);margin:4px 0 -4px;font-size:14px}
 `
 
     // 输入框下方按钮（与 cost-meter 的"费用明细"同款样式），单独注入，面板未打开时也生效
@@ -434,10 +458,14 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────── 目录选择 ─────────────
+    let clientCtx = null
+    const setClientCtx = (c) => { clientCtx = c }
+
     /**
      * 打开系统文件夹对话框。返回所选路径；取消返回 null；当前环境不支持返回 undefined。
-     * DSH Desktop：Electron preload 暴露 globalThis.__DSH_DIRECTORY_PICKER__.pick()（与官方 directory-picker-native 相同）；
-     * 浏览器访问本机 Web：由 Host 的 directoryPicker 服务弹出。
+     * 1) macOS Desktop：preload 暴露的 __DSH_DIRECTORY_PICKER__；
+     * 2) Windows / Linux Desktop 与本机 Web：官方 uiWorkspace.pickDirectory()（"选择工作区"同一路径）；
+     * 3) 兜底：Host 的 directoryPicker 服务。
      */
     async function pickSystemDirectory() {
       const desktop = globalThis.__DSH_DIRECTORY_PICKER__
@@ -445,59 +473,152 @@ window.__ModuleLoader__.load({
         const path = await desktop.pick()
         return path == null ? null : String(path)
       }
+      let ws = null
+      try { ws = clientCtx && typeof clientCtx.get === 'function' ? clientCtx.get('uiWorkspace') : null } catch (e) { ws = null }
+      if (ws && typeof ws.pickDirectory === 'function') {
+        const path = await ws.pickDirectory()
+        return path == null ? null : String(path)
+      }
       const r = await api.pick()
       if (!r.supported) return undefined
       return r.path ?? null
     }
 
-    function DirPicker({ title, start, onPick, onClose, requireConfig }) {
-      const [path, setPath] = useState(start || '')
+    const baseName = (p) => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
+    const sep = (p) => (String(p).includes('\\') || /^[A-Za-z]:/.test(String(p)) ? '\\' : '/')
+    /** 面包屑：D:\DTS\x → [D:\, D:\DTS, D:\DTS\x] */
+    function crumbsOf(p) {
+      if (!p) return []
+      const s = sep(p)
+      const parts = String(p).replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean)
+      const out = []
+      let acc = String(p).startsWith('/') ? '' : ''
+      parts.forEach((part, i) => {
+        acc = i === 0 ? (/^[A-Za-z]:$/.test(part) ? part + s : (String(p).startsWith('/') ? '/' + part : part)) : (acc.endsWith(s) ? acc + part : acc + s + part)
+        out.push({ label: i === 0 && /^[A-Za-z]:$/.test(part) ? part : part, path: acc })
+      })
+      return out
+    }
+
+    /**
+     * 目录选择对话框（覆盖在面板上）。
+     * mode：legacy（要重构的目录，只读，不提供新建）/ target（存放目录，可新建）/ project（打开已有项目，需含 refactorkit.yaml）
+     */
+    function DirPicker({ title, start, cwd, mode, onPick, onClose }) {
       const [data, setData] = useState(null)
       const [typed, setTyped] = useState(start || '')
       const [err, setErr] = useState('')
-      const [noNative, setNoNative] = useState(false)
+      const [places, setPlaces] = useState([])
+      const [creating, setCreating] = useState(false)
+      const [newName, setNewName] = useState('')
+      const [showHidden, setShowHidden] = useState(false)
+      const [sysMsg, setSysMsg] = useState('')
+      const allowCreate = mode === 'target'
       const load = useCallback((p) => {
         setErr('')
-        api.list(p).then((d) => { setData(d); setPath(d.path); setTyped(d.path) }, (e) => setErr(e.message))
+        return api.list(p).then((d) => { setData(d); setTyped(d.path) }, (e) => setErr(e.message))
       }, [])
-      useEffect(() => { load(start || '') }, [])
-      const system = async () => {
+      useEffect(() => {
+        api.places(cwd).then((r) => setPlaces(r.places || []), () => {})
+        // 起点不存在（例如要新建的存放目录）时，退到最近的已存在上级
+        const tryLoad = async (p) => {
+          try { const d = await api.list(p); setData(d); setTyped(d.path) } catch (e) {
+            const up = p && p.replace(/[\\/]+[^\\/]+[\\/]?$/, '')
+            if (up && up !== p) return tryLoad(up)
+            load('')
+          }
+        }
+        tryLoad(start || cwd || '')
+      }, [])
+      const create = async () => {
         try {
-          const path = await pickSystemDirectory()
-          if (path === undefined) { setNoNative(true); return }
-          if (path) onPick(path)
+          const r = await api.mkdir(data.path, newName.trim())
+          setCreating(false); setNewName('')
+          await load(r.path)
         } catch (e) { setErr(e.message) }
       }
-      const canPick = path && (!requireConfig || (data && data.hasConfig))
-      return h('div', { className: 'rk-card' },
-        h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, title), h('button', { className: 'rk-btn', onClick: onClose }, '取消')),
-        h('div', { className: 'rk-row', style: { marginTop: 6 } },
-          h('input', { className: 'rk-in rk-grow', value: typed, onChange: (e) => setTyped(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') load(typed) }, placeholder: '输入路径后回车，或在下方逐级选择' }),
-          h('button', { className: 'rk-btn', onClick: () => load(typed) }, '前往')),
-        h('div', { className: 'rk-row', style: { marginTop: 6 } },
-          h('button', { className: 'rk-btn', disabled: !data || data.parent === null, onClick: () => load(data.parent) }, '↑ 上一级'),
-          noNative ? h('span', { className: 'rk-hint' }, '当前环境不支持系统对话框，请在下方选择') : h('button', { className: 'rk-btn', onClick: system }, '用系统对话框选择…'),
-          data && data.hasConfig ? h('span', { className: 'rk-pill ok' }, '含 refactorkit.yaml') : null,
-          data && data.isGit ? h('span', { className: 'rk-pill info' }, 'git 仓库') : null),
-        err ? h('p', { className: 'rk-err' }, err) : null,
-        h('div', { className: 'rk-dirs' },
-          !data ? h('p', { className: 'rk-muted', style: { padding: 8 } }, '读取中…') : null,
-          data && data.entries.length === 0 ? h('p', { className: 'rk-muted', style: { padding: 8 } }, '没有子目录') : null,
-          data ? data.entries.filter((e) => !e.hidden).map((e) => h('button', { key: e.path, className: 'rk-dir', onClick: () => load(e.path) }, '📁 ' + e.name)) : null),
-        h('div', { className: 'rk-row' },
-          h('span', { className: 'rk-grow rk-path rk-hint' }, path || '（请选择）'),
-          h('button', { className: 'rk-btn primary', disabled: !canPick, onClick: () => onPick(path) }, requireConfig && data && !data.hasConfig ? '此目录不是 RefactorKit 项目' : '选择此目录')))
+      const system = async () => {
+        setSysMsg('')
+        try {
+          const p = await pickSystemDirectory()
+          if (p === undefined) { setSysMsg('当前环境不支持系统对话框'); return }
+          if (p) { if (mode === 'project') await load(p); else onPick(p) }
+        } catch (e) { setSysMsg('系统对话框打开失败：' + e.message) }
+      }
+      const cur = data && data.path
+      const isRoot = data && data.isRoot
+      const canPick = cur && !isRoot && (mode !== 'project' || data.hasConfig)
+      const entries = data ? data.entries.filter((e) => showHidden || !e.hidden) : []
+      const tags = data && !isRoot ? [
+        data.isGit ? h('span', { key: 'g', className: 'rk-pill info' }, 'git 仓库') : null,
+        data.hasConfig ? h('span', { key: 'c', className: 'rk-pill ok' }, '已是 RefactorKit 项目') : null,
+      ] : null
+      return h('div', { className: 'rk-modal', onClick: (e) => { if (e.target === e.currentTarget) onClose() } },
+        h('div', { className: 'rk-dlg', role: 'dialog', 'aria-label': title },
+          h('div', { className: 'rk-dlg-head' }, h('b', { className: 'rk-grow' }, title), h('button', { className: 'rk-x', onClick: onClose, 'aria-label': '关闭' }, '×')),
+          h('div', { className: 'rk-dlg-bar' },
+            h('button', { className: 'rk-btn', title: '上一级', disabled: !data || data.parent === null || isRoot, onClick: () => load(data.parent) }, '↑'),
+            h('div', { className: 'rk-crumbs' },
+              h('button', { className: 'rk-crumb', onClick: () => load('') }, '此电脑'),
+              crumbsOf(cur).map((c) => h(React.Fragment, { key: c.path }, h('span', { className: 'rk-muted' }, '›'), h('button', { className: 'rk-crumb', onClick: () => load(c.path) }, c.label))))),
+          h('div', { className: 'rk-dlg-bar' },
+            h('input', { className: 'rk-in rk-grow', value: typed, spellCheck: false, onChange: (e) => setTyped(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') load(typed) }, placeholder: '粘贴或输入路径，回车前往' }),
+            h('button', { className: 'rk-btn', onClick: () => load(typed) }, '前往')),
+          places.length ? h('div', { className: 'rk-places' }, places.map((p) => h('button', { key: p.path, className: 'rk-place', title: p.path, onClick: () => load(p.path) }, p.label))) : null,
+          err ? h('p', { className: 'rk-err', style: { margin: '4px 12px' } }, err) : null,
+          h('div', { className: 'rk-dlg-list' },
+            creating ? h('div', { className: 'rk-newdir' },
+              h('span', null, '📁'),
+              h('input', { className: 'rk-in rk-grow', autoFocus: true, value: newName, placeholder: '新文件夹名称', onChange: (e) => setNewName(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter' && newName.trim()) create(); if (e.key === 'Escape') setCreating(false) } }),
+              h('button', { className: 'rk-btn primary', disabled: !newName.trim(), onClick: create }, '创建'),
+              h('button', { className: 'rk-btn', onClick: () => setCreating(false) }, '取消')) : null,
+            !data ? h('p', { className: 'rk-muted', style: { padding: 10 } }, '读取中…') : null,
+            data && entries.length === 0 && !creating ? h('p', { className: 'rk-muted', style: { padding: 10 } }, allowCreate ? '空文件夹。可以直接选择它，或新建子文件夹。' : '没有子文件夹') : null,
+            entries.map((e) => h('button', { key: e.path, className: 'rk-dir', title: '进入 ' + e.path, onClick: () => load(e.path) }, h('span', { className: 'rk-dir-ic' }, isRoot ? '💽' : '📁'), h('span', { className: 'rk-grow' }, e.name), h('span', { className: 'rk-muted' }, '›')))),
+          h('div', { className: 'rk-dlg-sel' },
+            h('span', { className: 'rk-muted' }, '已选：'),
+            h('span', { className: 'rk-path rk-grow', title: cur || '' }, isRoot || !cur ? '（请进入一个文件夹）' : cur),
+            tags),
+          mode === 'project' && data && !isRoot && !data.hasConfig ? h('p', { className: 'rk-hint', style: { margin: '0 12px' } }, '这个文件夹里没有 refactorkit.yaml。请选择重构后存放的目录，或用"新建项目"。') : null,
+          mode === 'legacy' && data && data.hasConfig ? h('p', { className: 'rk-hint', style: { margin: '0 12px', color: 'var(--dsw-alias-state-warn-primary)' } }, '这个文件夹已是 RefactorKit 项目（存放目录），通常不应作为要重构的老系统。') : null,
+          sysMsg ? h('p', { className: 'rk-hint', style: { margin: '0 12px' } }, sysMsg + '，请在上方列表中选择。') : null,
+          h('div', { className: 'rk-dlg-foot' },
+            allowCreate ? h('button', { className: 'rk-btn', disabled: !cur || isRoot || creating, onClick: () => { setCreating(true); setNewName('') } }, '＋ 新建文件夹') : null,
+            h('button', { className: 'rk-btn', onClick: system, title: '打开 Windows 选择文件夹窗口' }, '系统对话框…'),
+            h('label', { className: 'rk-hint', style: { display: 'flex', alignItems: 'center', gap: 4 } }, h('input', { type: 'checkbox', checked: showHidden, onChange: (e) => setShowHidden(e.target.checked) }), '显示隐藏'),
+            h('span', { className: 'rk-grow' }),
+            h('button', { className: 'rk-btn', onClick: onClose }, '取消'),
+            h('button', { className: 'rk-btn primary', disabled: !canPick, onClick: () => onPick(cur) }, canPick ? '选择「' + baseName(cur) + '」' : '选择'))))
     }
 
-    function PathField({ label, hint, value, onChange, pickerTitle, requireConfig }) {
+    /** 路径字段：显示路径与状态（git / 已是项目 / 不存在将创建），"浏览…"打开目录选择对话框。 */
+    function PathField({ label, desc, value, onChange, pickerTitle, mode, cwd }) {
       const [open, setOpen] = useState(false)
-      return h('div', null,
-        h('label', { className: 'rk-lbl' }, label),
+      const [info, setInfo] = useState(null)
+      useEffect(() => {
+        if (!value) { setInfo(null); return undefined }
+        let alive = true
+        const t = setTimeout(() => {
+          api.list(value).then((d) => alive && setInfo({ exists: true, isGit: d.isGit, hasConfig: d.hasConfig, count: d.entries.length }), () => alive && setInfo({ exists: false }))
+        }, 300)
+        return () => { alive = false; clearTimeout(t) }
+      }, [value])
+      let status = null
+      if (value && info) {
+        if (!info.exists) status = mode === 'target' ? h('span', { className: 'rk-pill warn' }, '新目录，初始化时创建') : h('span', { className: 'rk-pill bad' }, '目录不存在')
+        else status = h(React.Fragment, null,
+          h('span', { className: 'rk-pill ok' }, '已存在'),
+          info.isGit ? h('span', { className: 'rk-pill info' }, 'git 仓库') : null,
+          info.hasConfig ? h('span', { className: 'rk-pill info' }, '已是 RefactorKit 项目') : null,
+          info.count === 0 ? h('span', { className: 'rk-pill mute' }, '空文件夹') : null)
+      }
+      return h('div', { className: 'rk-pathfield' },
+        h('div', { className: 'rk-row' }, h('b', { className: 'rk-grow' }, label), status),
+        desc ? h('div', { className: 'rk-hint', style: { marginBottom: 4 } }, desc) : null,
         h('div', { className: 'rk-row' },
-          h('input', { className: 'rk-in rk-grow', value: value || '', onChange: (e) => onChange(e.target.value) }),
-          h('button', { className: 'rk-btn', onClick: () => setOpen(!open) }, open ? '收起' : '选择…')),
-        hint ? h('div', { className: 'rk-hint' }, hint) : null,
-        open ? h(DirPicker, { title: pickerTitle || label, start: value, requireConfig, onClose: () => setOpen(false), onPick: (p) => { onChange(p); setOpen(false) } }) : null)
+          h('input', { className: 'rk-in rk-grow rk-mono', value: value || '', spellCheck: false, placeholder: '点击"浏览…"选择，或直接粘贴路径', onChange: (e) => onChange(e.target.value) }),
+          h('button', { className: 'rk-btn primary', onClick: () => setOpen(true) }, '浏览…')),
+        open ? h(DirPicker, { title: pickerTitle || label, start: value, cwd, mode, onClose: () => setOpen(false), onPick: (p) => { onChange(p); setOpen(false) } }) : null)
     }
 
     // ───────────── 新建项目 ─────────────
@@ -517,8 +638,9 @@ window.__ModuleLoader__.load({
         h('div', { className: 'rk-card' },
           h('div', { className: 'rk-row' }, h('div', { className: 'rk-h rk-grow' }, '新建重构项目'), onCancel ? h('button', { className: 'rk-btn', onClick: onCancel }, '返回') : null),
           h('p', { className: 'rk-muted' }, '选好两个目录后点"探测"，插件识别技术栈并生成配置草稿；在下面的表单检查后保存即完成初始化（等同 CP0 审核通过）。'),
-          h(PathField, { label: '① 要重构的目录（老系统，只读）', hint: '插件会拦截对这个目录的任何写入', value: legacyRoot, onChange: setLegacy, pickerTitle: '选择要重构的目录' }),
-          h(PathField, { label: '② 重构后存放的目录（新系统）', hint: '可以是已有仓库，也可以是一个新目录（会自动创建）；refactorkit.yaml 与过程记录 .refactorkit/ 都放在这里', value: targetRoot, onChange: setTarget, pickerTitle: '选择重构后存放的目录' }),
+          h(PathField, { label: '① 要重构的目录', desc: '老系统源码所在目录。插件只读取它，并拦截任何写入。', value: legacyRoot, onChange: setLegacy, pickerTitle: '选择要重构的目录（老系统）', mode: 'legacy', cwd }),
+          h('div', { className: 'rk-arrow' }, '↓ 重构到'),
+          h(PathField, { label: '② 重构后存放的目录', desc: '新系统代码写到这里。可选已有仓库，也可以在浏览时「新建文件夹」；refactorkit.yaml 与过程记录 .refactorkit/ 也放在这里。', value: targetRoot, onChange: setTarget, pickerTitle: '选择重构后存放的目录（新系统）', mode: 'target', cwd }),
           differs ? h('p', { className: 'rk-hint', style: { color: 'var(--dsw-alias-state-warn-primary)' } }, '提示：当前会话的工作目录是 ' + cwd + '。DSH 默认只允许会话写入自己的工作目录，建议在 DSH 中新建会话并把工作目录设为存放目录，或给本会话"完全访问"权限。') : null,
           h(Field, { label: '项目名称（可选）' }, h('input', { className: 'rk-in', value: name, onChange: (e) => setName(e.target.value) })),
           h('div', { className: 'rk-row', style: { marginTop: 8 } }, h('button', { className: 'rk-btn primary', disabled: busy || !targetRoot || !legacyRoot, onClick: detect }, busy ? '探测中…' : (draft ? '重新探测' : '探测并生成草稿'))),
@@ -553,9 +675,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'rk-card' },
           h('b', null, '打开已有项目'),
           h('p', { className: 'rk-muted' }, '选择一个含 refactorkit.yaml 的目录（重构后存放的目录）。'),
-          open === 'pick'
-            ? h(DirPicker, { title: '选择已有的重构项目目录', start: ctxInfo && ctxInfo.cwd, requireConfig: true, onClose: () => setOpen(''), onPick: bind })
-            : h('button', { className: 'rk-btn', onClick: () => setOpen('pick') }, '选择目录…')),
+          h('button', { className: 'rk-btn', onClick: () => setOpen('pick') }, '浏览…'),
+          open === 'pick' ? h(DirPicker, { title: '打开已有的重构项目', start: ctxInfo && ctxInfo.cwd, cwd: ctxInfo && ctxInfo.cwd, mode: 'project', onClose: () => setOpen(''), onPick: bind }) : null),
         recent.length ? h('div', { className: 'rk-card' },
           h('b', null, '最近的项目'),
           recent.map((r) => h('div', { key: r.configFile, className: 'rk-row', style: { marginTop: 6 } },
@@ -702,6 +823,7 @@ window.__ModuleLoader__.load({
     // ───────────── 注册 ─────────────
     exports.inject = ['slots', 'sidebarRightTabs', 'sidebarRight']
     exports.apply = function apply(ctx) {
+      setClientCtx(ctx)
       openPanel = () => { try { ctx.sidebarRight.openTab(TAB_KIND) } catch (e) { console.warn('[refactorkit] 无法打开面板：', e) } }
       ctx.effect(() => ctx.sidebarRightTabs.register({
         id: TAB_ID,
@@ -746,7 +868,7 @@ window.__ModuleLoader__.load({
     }
 
     // 仅供测试：服务端渲染各视图
-    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, DockButton, Md, pickSystemDirectory }
+    exports.__test = { Panel, ConfigForm, ReviewCard, ReviewsView, OverviewView, GapsView, TasksView, InitView, ProjectChooser, ActivityView, DirPicker, PathField, DockButton, Md, pickSystemDirectory, setClientCtx, crumbsOf }
 
     module.exports = exports
     return module.exports

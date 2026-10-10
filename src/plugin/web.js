@@ -138,6 +138,32 @@ export function createApi(services = {}) {
       }
     },
 
+    'POST /fs/mkdir': async (_q, body) => {
+      const parent = resolve(need(body.path, 'path'))
+      const name = need(body.name, 'name')
+      if (/[\\/:*?"<>|]/.test(name) || name === '.' || name === '..' || name.length > 120) throw new HttpError(400, '文件夹名称不能包含 \\ / : * ? " < > | ，也不能是 . 或 ..')
+      if (!(await exists(parent))) throw new HttpError(400, `上级目录不存在：${parent}`)
+      const target = join(parent, name)
+      if (await exists(target)) throw new HttpError(409, `已存在：${target}`)
+      try { await mkdir(target) } catch (error) { throw new HttpError(400, `创建失败：${error.code ?? error.message}`) }
+      return { ok: true, path: target }
+    },
+
+    // 快捷位置：会话目录、最近项目涉及的目录、用户目录、驱动器
+    'GET /fs/places': async (q) => {
+      const places = []
+      const add = async (label, path) => { if (path && (await exists(path)) && !places.some((p) => samePath(p.path, path))) places.push({ label, path }) }
+      await add('会话目录', q.get('cwd'))
+      for (const r of await recentProjects()) {
+        await add(`${r.name || '项目'} · 存放目录`, r.root)
+        await add(`${r.name || '项目'} · 老系统`, r.legacyRoot)
+      }
+      await add('用户目录', process.env.USERPROFILE ?? process.env.HOME)
+      if (process.platform === 'win32') for (const l of 'CDEFGHIJ') await add(`${l}: 盘`, `${l}:\\`)
+      else await add('根目录', '/')
+      return { places }
+    },
+
     'POST /fs/pick': async () => {
       const picker = services.picker?.()
       const cap = picker?.capability?.()

@@ -143,6 +143,24 @@ describe('目录选择、项目绑定与重构过程', () => {
     assert.ok(roots.body.entries.length > 0, '空路径列出驱动器 / 根目录')
   })
 
+  test('fs/mkdir：新建文件夹；非法名称 / 已存在 / 上级不存在被拒', async () => {
+    const r = await api.handle('POST', '/fs/mkdir', q(), { path: tmp, name: '新系统输出' })
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(r.body.path, join(tmp, '新系统输出'))
+    assert.equal((await api.handle('GET', '/fs/list', q({ path: r.body.path }))).status, 200)
+    assert.equal((await api.handle('POST', '/fs/mkdir', q(), { path: tmp, name: '新系统输出' })).status, 409)
+    assert.equal((await api.handle('POST', '/fs/mkdir', q(), { path: tmp, name: 'a/b' })).status, 400)
+    assert.equal((await api.handle('POST', '/fs/mkdir', q(), { path: tmp, name: '..' })).status, 400)
+    assert.equal((await api.handle('POST', '/fs/mkdir', q(), { path: join(tmp, 'nope'), name: 'x' })).status, 400)
+  })
+
+  test('fs/places：会话目录在前，含驱动器 / 根目录', async () => {
+    const r = await api.handle('GET', '/fs/places', q({ cwd: target }))
+    assert.equal(r.body.places[0].label, '会话目录')
+    assert.equal(r.body.places[0].path, target)
+    assert.ok(r.body.places.some((p) => /盘$|根目录/.test(p.label)))
+  })
+
   test('fs/pick：无系统选择器时 supported=false', async () => {
     assert.deepEqual((await api.handle('POST', '/fs/pick', q(), {})).body, { supported: false })
   })
@@ -346,11 +364,16 @@ describe('浏览器端', () => {
     const reviews = render(T.ReviewsView, props)
     assert.ok(reviews.includes('等待你决定（1）') && reviews.includes('已阅'))
     const init = render(T.InitView, { cwd: 'D:/t', sessionId: 's', catalog, notify: noop, onDone: noop })
-    for (const s of ['要重构的目录', '重构后存放的目录', '选择…', '探测并生成草稿']) assert.ok(init.includes(s), `新建项目缺少：${s}`)
+    for (const s of ['要重构的目录', '重构后存放的目录', '浏览…', '重构到', '探测并生成草稿']) assert.ok(init.includes(s), `新建项目缺少：${s}`)
     const chooser = render(T.ProjectChooser, { ctxInfo: { cwd: 'D:/t', bound: true, recent: [{ configFile: 'D:/o/refactorkit.yaml', name: 'DTS', root: 'D:/o', legacyRoot: 'D:/l' }] }, sessionId: 's', notify: noop, onDone: noop, onNew: noop })
     for (const s of ['新建项目…', '打开已有项目', '最近的项目', 'DTS', '解除绑定']) assert.ok(chooser.includes(s), `项目选择缺少：${s}`)
     assert.ok(render(T.ActivityView, props).includes('全部过程'))
-    assert.ok(render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', onPick: noop, onClose: noop }).includes('用系统对话框选择'))
+    const legacyDlg = render(T.DirPicker, { title: '选择要重构的目录', start: 'D:/', mode: 'legacy', onPick: noop, onClose: noop })
+    for (const s of ['此电脑', '系统对话框…', '取消', '显示隐藏']) assert.ok(legacyDlg.includes(s), `目录对话框缺少：${s}`)
+    assert.ok(!legacyDlg.includes('新建文件夹'), '要重构的目录（只读）不提供新建文件夹')
+    assert.ok(render(T.DirPicker, { title: '选择存放目录', start: 'D:/', mode: 'target', onPick: noop, onClose: noop }).includes('新建文件夹'), '存放目录提供新建文件夹')
+    assert.deepEqual(JSON.parse(JSON.stringify(T.crumbsOf('D:\\DTS\\DTS-rebuild'))).map((c) => c.path), ['D:\\', 'D:\\DTS', 'D:\\DTS\\DTS-rebuild'])
+    assert.ok(render(T.PathField, { label: '② 重构后存放的目录', value: '', onChange: noop, mode: 'target' }).includes('浏览…'))
     assert.ok(render(T.DockButton, { sessionId: 's' }).includes('重构'))
     assert.equal(render(T.DockButton, {}), '', '没有会话时不显示')
     // 系统对话框：Desktop 的 preload 接口优先，其次 Host，都没有时返回 undefined
@@ -359,6 +382,10 @@ describe('浏览器端', () => {
     sb.__DSH_DIRECTORY_PICKER__ = { pick: async () => null }
     assert.equal(await T.pickSystemDirectory(), null, '取消返回 null')
     delete sb.__DSH_DIRECTORY_PICKER__
+    // Windows Desktop：没有 preload 接口，走官方 uiWorkspace.pickDirectory()
+    T.setClientCtx({ get: (n) => (n === 'uiWorkspace' ? { pickDirectory: async () => 'D:\\picked' } : undefined) })
+    assert.equal(await T.pickSystemDirectory(), 'D:\\picked')
+    T.setClientCtx({ get: () => undefined })
     sb.fetch = async () => ({ ok: true, json: async () => ({ supported: false }) })
     assert.equal(await T.pickSystemDirectory(), undefined)
     sb.fetch = async () => ({ ok: true, json: async () => ({ supported: true, path: 'E:\\x' }) })
